@@ -242,6 +242,14 @@ describe('assignEvidenceGrade', () => {
   it('marks decision events as convention', () => {
     expect(assignEvidenceGrade('decision.approve', 'claude-code')).toBe('convention');
   });
+
+  it('marks hugin task lifecycle events as mechanism', () => {
+    expect(assignEvidenceGrade('task.execution.complete', 'hugin')).toBe('mechanism');
+  });
+
+  it('marks ratatoskr telegram events as mechanism', () => {
+    expect(assignEvidenceGrade('telegram.message.received', 'ratatoskr')).toBe('mechanism');
+  });
 });
 
 // ============================================================
