@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initDatabase } from '../src/db.js';
-import { AppendWorker, verifyChain, GENESIS_HASH } from '../src/hash-chain.js';
+import { AppendWorker, verifyChain } from '../src/hash-chain.js';
 import { canonicalize } from '../src/canonical.js';
 import { redact } from '../src/redaction.js';
 import { classifyRetention, assignEvidenceGrade } from '../src/classification.js';
