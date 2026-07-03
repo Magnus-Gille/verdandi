@@ -7,14 +7,13 @@
 
 import { randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
-import { type AuthResult, type AuthError, createAuthenticator } from './auth.js';
+import { type AuthResult, createAuthenticator } from './auth.js';
 import { redact } from './redaction.js';
 import { classifyRetention, assignEvidenceGrade, isErasureEligible, type Severity } from './classification.js';
-import { AppendWorker, type AppendResult } from './hash-chain.js';
+import { AppendWorker } from './hash-chain.js';
 
 const EVENT_TYPE_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*){1,4}$/;
 const VALID_SEVERITIES = new Set(['critical', 'significant', 'routine', 'debug']);
-const MAX_BODY_SIZE = 256 * 1024; // 256 KB
 const MAX_DETAIL_LENGTH = 2000;
 const MAX_REASONING_LENGTH = 5000;
 const MAX_ALTERNATIVES = 10;

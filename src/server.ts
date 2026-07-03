@@ -106,7 +106,7 @@ export function createServer(db: Database.Database) {
       limit?: string;
       offset?: string;
     };
-  }>('/api/events', async (request, reply) => {
+  }>('/api/events', async (request) => {
     const q = request.query;
 
     const conditions: string[] = [];
