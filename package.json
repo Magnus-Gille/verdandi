@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   },
   "author": "Magnus Gille",
   "license": "UNLICENSED",
