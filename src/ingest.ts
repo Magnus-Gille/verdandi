@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
-import { type AuthResult, createAuthenticator } from './auth.js';
+import { type AuthResult, createAuthenticator, type Scope } from './auth.js';
 import { redact } from './redaction.js';
 import { classifyRetention, assignEvidenceGrade, isErasureEligible, type Severity } from './classification.js';
 import { AppendWorker } from './hash-chain.js';
@@ -59,9 +59,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     body: unknown,
   ): Promise<IngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     // Stage 2-8: Process the event
     return this.processEvent(auth, body);
@@ -74,9 +76,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     body: unknown,
   ): Promise<BatchIngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     if (!body || typeof body !== 'object' || !('events' in body)) {
       return { ok: false, status: 400, error: 'Batch body must have an events array' };
@@ -133,9 +137,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     hookPayload: unknown,
   ): Promise<IngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     // Transform hook payload to Verdandi event
     const event = transformHookPayload(hookPayload);
@@ -215,6 +221,20 @@ export class IngestPipeline {
       return { ok: false, status: 500, error: `Append failed: ${message}` };
     }
   }
+}
+
+/**
+ * Require the `write` scope (or `admin`) on an authenticated request.
+ * Writing to the append-only audit log must be denied to read-only keys —
+ * otherwise a read consumer could forge events. Returns an IngestError (403)
+ * when the scope is missing, or null when authorized.
+ */
+function requireWriteScope(auth: AuthResult): IngestError | null {
+  const allowed: Scope[] = ['write', 'admin'];
+  if (!auth.scopes.some(s => allowed.includes(s))) {
+    return { ok: false, status: 403, error: 'Missing required scope: write' };
+  }
+  return null;
 }
 
 /**
@@ -387,9 +407,14 @@ function extractShellCommand(toolInput: unknown): string {
 function matchShellCommand(command: string): ToolMapping | null {
   if (!command) return null;
 
+  // A command token starts at line start, after whitespace/control chars, or
+  // after a path/quote boundary — so `./noxctl`, `/usr/local/bin/noxctl` and
+  // `bash -lc 'noxctl …'` all count, while `mynoxctl` / a substring do not.
+  const CMD = "(?:^|[\\s;&|(`$/'\"])";
+
   // Money movements: Fortnox accounting CLI (replaces mcp__fortnox__).
-  // `noxctl` as a bare command token, not merely a substring (e.g. a path).
-  if (/(?:^|[\s;&|(`$])noxctl(?:\s|$)/.test(command)) {
+  // Trailing (?:\s|$) keeps `/var/log/noxctl.log` and `noxctl-data` from matching.
+  if (new RegExp(`${CMD}noxctl(?:\\s|$)`).test(command)) {
     return { eventType: 'accounting.booking.create', severity: 'significant' };
   }
 
@@ -397,11 +422,13 @@ function matchShellCommand(command: string): ToolMapping | null {
   //   m365:     `m365 outlook mail send ...` or a Graph `.../sendMail` request
   //   himalaya: `himalaya message send|reply|forward|write ...` (write also sends)
   //   gws:      `gws gmail ... send ...`
+  // The Graph send is matched on the `/sendMail` URL path (not the bare token)
+  // so a grep/echo mentioning "sendMail" isn't misread as an outbound send.
   if (
-    /(?:^|[\s;&|(`$])m365\b[\s\S]*\bmail\s+send\b/.test(command) ||
-    /\bsendMail\b/.test(command) ||
-    /(?:^|[\s;&|(`$])himalaya\b[\s\S]*\bmessage\s+(?:send|reply|forward|write)\b/.test(command) ||
-    /(?:^|[\s;&|(`$])gws\s+gmail\b[\s\S]*\bsend\b/.test(command)
+    new RegExp(`${CMD}m365\\b[\\s\\S]*\\bmail\\s+send\\b`).test(command) ||
+    /\/sendMail\b/i.test(command) ||
+    new RegExp(`${CMD}himalaya\\b[\\s\\S]*\\bmessage\\s+(?:send|reply|forward|write)\\b`).test(command) ||
+    new RegExp(`${CMD}gws\\s+gmail\\b[\\s\\S]*\\bsend\\b`).test(command)
   ) {
     return { eventType: 'email.send', severity: 'significant' };
   }

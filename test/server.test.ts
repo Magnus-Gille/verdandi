@@ -118,6 +118,24 @@ describe('GET /api/events/:eventId and /api/verify authorization', () => {
   });
 });
 
+describe('POST endpoints require write scope', () => {
+  it('rejects a write to /api/events with a read-only key (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    app = createServer(db, { logger: false });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/events',
+      headers: { authorization: `Bearer ${key}` },
+      payload: {
+        event_type: 'accounting.booking.create',
+        severity: 'significant',
+        action: { verb: 'create', resource_type: 'voucher' },
+      },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
 describe('/health stays open', () => {
   it('serves health without authorization', async () => {
     app = createServer(db, { logger: false });

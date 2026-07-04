@@ -456,6 +456,85 @@ describe('hook severity mapping (post-MCP CLI shell commands)', () => {
     expect(row.event_type).toBe('agent.shell.execute');
     expect(row.severity).toBe('debug');
   });
+
+  it('does not classify a grep for the sendMail token as an email send', async () => {
+    const result = await ingestBashHook('grep -R sendMail docs/');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('agent.shell.execute');
+    expect(row.severity).toBe('debug');
+  });
+
+  it('classifies a Graph /sendMail POST as email.send', async () => {
+    const result = await ingestBashHook(
+      'm365 request -u "https://graph.microsoft.com/v1.0/me/sendMail" -m post -b @body.json'
+    );
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('email.send');
+  });
+
+  it('classifies path-qualified and wrapped noxctl invocations as accounting', async () => {
+    const result = await ingestBashHook("bash -lc './noxctl invoice create --amount 8500'");
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('accounting.booking.create');
+    expect(row.severity).toBe('significant');
+  });
+});
+
+// ============================================================
+// Write-scope enforcement on ingest endpoints (Issue #9 / Codex #14)
+//
+// Once read-only keys become real (GET endpoints now require 'read'), the
+// write paths must reject read-only keys — otherwise a read consumer could
+// forge events into the append-only log.
+// ============================================================
+
+describe('write scope enforcement', () => {
+  function newPipeline() {
+    const worker = new AppendWorker(db);
+    return new IngestPipeline(db, worker);
+  }
+
+  it('rejects a read-only key on single ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingest(`Bearer ${key}`, {
+      event_type: 'accounting.booking.create',
+      severity: 'significant',
+      action: { verb: 'create', resource_type: 'voucher' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+  });
+
+  it('rejects a read-only key on batch ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingestBatch(`Bearer ${key}`, { events: [] });
+    expect('ok' in result && result.ok === false).toBe(true);
+    if ('status' in result) expect(result.status).toBe(403);
+  });
+
+  it('rejects a read-only key on hook ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingestHook(`Bearer ${key}`, {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'noxctl invoice create' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+  });
+
+  it('allows an admin key to write', async () => {
+    const { key } = registerApiKey(db, 'root', ['admin']);
+    const result = await newPipeline().ingest(`Bearer ${key}`, {
+      event_type: 'accounting.booking.create',
+      severity: 'significant',
+      action: { verb: 'create', resource_type: 'voucher' },
+    });
+    expect(result.ok).toBe(true);
+  });
 });
 
 // ============================================================
