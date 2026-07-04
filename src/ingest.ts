@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
-import { type AuthResult, createAuthenticator } from './auth.js';
+import { type AuthResult, createAuthenticator, type Scope } from './auth.js';
 import { redact } from './redaction.js';
 import { classifyRetention, assignEvidenceGrade, isErasureEligible, type Severity } from './classification.js';
 import { AppendWorker } from './hash-chain.js';
@@ -37,6 +37,8 @@ export interface IngestError {
 export interface BatchIngestResult {
   accepted: number;
   rejected: number;
+  /** Hook-format events that transformed to nothing significant (e.g. Read/Glob). */
+  filtered: number;
   results: Array<IngestResult | IngestError>;
   last_entry_hash?: string;
 }
@@ -57,9 +59,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     body: unknown,
   ): Promise<IngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     // Stage 2-8: Process the event
     return this.processEvent(auth, body);
@@ -72,9 +76,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     body: unknown,
   ): Promise<BatchIngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     if (!body || typeof body !== 'object' || !('events' in body)) {
       return { ok: false, status: 400, error: 'Batch body must have an events array' };
@@ -92,10 +98,26 @@ export class IngestPipeline {
     const results: Array<IngestResult | IngestError> = [];
     let accepted = 0;
     let rejected = 0;
+    let filtered = 0;
     let lastHash: string | undefined;
 
     for (const event of events) {
-      const result = await this.processEvent(auth, event);
+      // sync-outbox.sh posts raw hook-format lines. Transform them here so
+      // the batch path accepts the same shape as POST /api/events/hook,
+      // while still accepting full-format Verdandi events.
+      let toProcess: unknown = event;
+      if (isHookFormat(event)) {
+        const transformed = transformHookPayload(event);
+        if (!transformed) {
+          // Not significant enough to audit (e.g. Read/Glob/Grep) — skip, don't reject.
+          filtered++;
+          results.push({ ok: false, status: 204, error: 'Hook event filtered — not significant' });
+          continue;
+        }
+        toProcess = transformed;
+      }
+
+      const result = await this.processEvent(auth, toProcess);
       results.push(result);
       if (result.ok) {
         accepted++;
@@ -105,7 +127,7 @@ export class IngestPipeline {
       }
     }
 
-    return { accepted, rejected, results, last_entry_hash: lastHash };
+    return { accepted, rejected, filtered, results, last_entry_hash: lastHash };
   }
 
   /**
@@ -115,9 +137,11 @@ export class IngestPipeline {
     authHeader: string | undefined,
     hookPayload: unknown,
   ): Promise<IngestResult | IngestError> {
-    // Stage 1: Authentication
+    // Stage 1: Authentication + write authorization
     const auth = this.authenticate(authHeader);
     if (!auth.ok) return auth;
+    const scopeError = requireWriteScope(auth);
+    if (scopeError) return scopeError;
 
     // Transform hook payload to Verdandi event
     const event = transformHookPayload(hookPayload);
@@ -200,6 +224,20 @@ export class IngestPipeline {
 }
 
 /**
+ * Require the `write` scope (or `admin`) on an authenticated request.
+ * Writing to the append-only audit log must be denied to read-only keys —
+ * otherwise a read consumer could forge events. Returns an IngestError (403)
+ * when the scope is missing, or null when authorized.
+ */
+function requireWriteScope(auth: AuthResult): IngestError | null {
+  const allowed: Scope[] = ['write', 'admin'];
+  if (!auth.scopes.some(s => allowed.includes(s))) {
+    return { ok: false, status: 403, error: 'Missing required scope: write' };
+  }
+  return null;
+}
+
+/**
  * Validate an event payload (Stage 2).
  * Returns an error message or null if valid.
  */
@@ -277,7 +315,15 @@ function transformHookPayload(payload: unknown): Record<string, unknown> | null 
     eventType = 'decision.approve';
     severity = 'significant';
   } else if (toolName) {
-    const mapping = HOOK_TOOL_MAPPING[toolName] ?? matchToolPattern(toolName);
+    let mapping = HOOK_TOOL_MAPPING[toolName] ?? matchToolPattern(toolName);
+    // Shell tools carry the real action in their command string. Since the
+    // May 2026 MCP→CLI move, money/email actions arrive as Bash calls
+    // (noxctl / m365 / himalaya / gws) rather than mcp__* tool names — inspect
+    // the command so they aren't buried as debug-grade shell events.
+    if (toolName === 'Bash') {
+      const shellMapping = matchShellCommand(extractShellCommand(hook.tool_input));
+      if (shellMapping) mapping = shellMapping;
+    }
     if (!mapping) return null; // Not significant — skip
     eventType = mapping.eventType;
     severity = mapping.severity;
@@ -341,6 +387,66 @@ function matchToolPattern(toolName: string): ToolMapping | null {
   }
   // Default: not significant enough to audit
   return null;
+}
+
+/** Extract the command string from a Bash tool's tool_input, if present. */
+function extractShellCommand(toolInput: unknown): string {
+  if (toolInput && typeof toolInput === 'object') {
+    const cmd = (toolInput as Record<string, unknown>).command;
+    if (typeof cmd === 'string') return cmd;
+  }
+  return '';
+}
+
+/**
+ * Detect high-value CLI actions inside a shell command string.
+ * Post-May 2026 the fleet moved from MCP tools to CLIs, so money/email
+ * actions now arrive as Bash tool calls and must be reclassified out of
+ * the debug-grade shell bucket. Returns null for ordinary shell commands.
+ */
+function matchShellCommand(command: string): ToolMapping | null {
+  if (!command) return null;
+
+  // A command token starts at line start, after whitespace/control chars, or
+  // after a path/quote boundary — so `./noxctl`, `/usr/local/bin/noxctl` and
+  // `bash -lc 'noxctl …'` all count, while `mynoxctl` / a substring do not.
+  const CMD = "(?:^|[\\s;&|(`$/'\"])";
+
+  // Money movements: Fortnox accounting CLI (replaces mcp__fortnox__).
+  // Trailing (?:\s|$) keeps `/var/log/noxctl.log` and `noxctl-data` from matching.
+  if (new RegExp(`${CMD}noxctl(?:\\s|$)`).test(command)) {
+    return { eventType: 'accounting.booking.create', severity: 'significant' };
+  }
+
+  // Outbound email via the fleet CLIs (replaces mcp__microsoft-mcp__send_email):
+  //   m365:     `m365 outlook mail send ...` or a Graph `.../sendMail` request
+  //   himalaya: `himalaya message send|reply|forward|write ...` (write also sends)
+  //   gws:      `gws gmail ... send ...`
+  // The Graph send is matched on the `/sendMail` URL path (not the bare token)
+  // so a grep/echo mentioning "sendMail" isn't misread as an outbound send.
+  if (
+    new RegExp(`${CMD}m365\\b[\\s\\S]*\\bmail\\s+send\\b`).test(command) ||
+    /\/sendMail\b/i.test(command) ||
+    new RegExp(`${CMD}himalaya\\b[\\s\\S]*\\bmessage\\s+(?:send|reply|forward|write)\\b`).test(command) ||
+    new RegExp(`${CMD}gws\\s+gmail\\b[\\s\\S]*\\bsend\\b`).test(command)
+  ) {
+    return { eventType: 'email.send', severity: 'significant' };
+  }
+
+  return null;
+}
+
+/**
+ * A raw Claude Code hook payload carries tool_name / hook_event_name and no
+ * event_type; a full Verdandi event carries event_type. This lets the batch
+ * endpoint accept the hook-format lines sync-outbox.sh sends alongside
+ * full-format events.
+ */
+function isHookFormat(event: unknown): boolean {
+  if (typeof event !== 'object' || event === null) return false;
+  const e = event as Record<string, unknown>;
+  if ('event_type' in e) return false;
+  return 'tool_name' in e || 'hook_event_name' in e;
 }
 
 function truncate(s: string, max: number): string {

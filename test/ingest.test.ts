@@ -6,7 +6,7 @@ import { canonicalize } from '../src/canonical.js';
 import { redact } from '../src/redaction.js';
 import { classifyRetention, assignEvidenceGrade } from '../src/classification.js';
 import { registerApiKey, createAuthenticator } from '../src/auth.js';
-import { IngestPipeline } from '../src/ingest.js';
+import { IngestPipeline, type BatchIngestResult } from '../src/ingest.js';
 
 let db: Database.Database;
 
@@ -377,5 +377,243 @@ describe('IngestPipeline', () => {
     const row = db.prepare('SELECT payload FROM audit_events WHERE id = 1').get() as { payload: string };
     expect(row.payload).toContain('[REDACTED');
     expect(row.payload).not.toContain('sk-ant-secret');
+  });
+});
+
+// ============================================================
+// Post-MCP severity mapping — CLI shell commands (Issue #9)
+//
+// After the May 2026 MCP→CLI rationalization the money/email actions
+// arrive as Bash tool calls (noxctl / m365 / himalaya / gws), not the
+// removed mcp__fortnox__ / mcp__microsoft-mcp__ tool names. The hook
+// transform must inspect the shell command so these don't land as
+// debug-grade shell events with the wrong retention class.
+// ============================================================
+
+describe('hook severity mapping (post-MCP CLI shell commands)', () => {
+  async function ingestBashHook(command: string) {
+    const { key } = registerApiKey(db, 'claude-code', ['write']);
+    const worker = new AppendWorker(db);
+    const pipeline = new IngestPipeline(db, worker);
+    const result = await pipeline.ingestHook(`Bearer ${key}`, {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command, description: 'run a command' },
+      session_id: 'sess-9',
+      tool_use_id: 'tu-1',
+    });
+    return result;
+  }
+
+  function storedRow() {
+    return db.prepare(
+      'SELECT event_type, severity, retention_class FROM audit_events WHERE id = 1'
+    ).get() as { event_type: string; severity: string; retention_class: string };
+  }
+
+  it('maps noxctl (Fortnox) shell commands to accounting severity', async () => {
+    const result = await ingestBashHook('noxctl invoice create --amount 8500 --customer 42');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('accounting.booking.create');
+    expect(row.severity).toBe('significant');
+    expect(row.retention_class).toBe('accounting');
+  });
+
+  it('maps m365 mail send to email.send', async () => {
+    const result = await ingestBashHook(
+      'm365 outlook mail send --to a@b.com --subject Hi --bodyContents "hello"'
+    );
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('email.send');
+    expect(row.severity).toBe('significant');
+    expect(row.retention_class).toBe('operational');
+  });
+
+  it('maps himalaya message reply/write to email.send', async () => {
+    const result = await ingestBashHook('himalaya message reply -a gille 1234');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('email.send');
+    expect(row.severity).toBe('significant');
+  });
+
+  it('maps gws gmail send to email.send', async () => {
+    const result = await ingestBashHook(
+      "gws gmail message send --params '{\"to\":\"x@y.com\"}'"
+    );
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('email.send');
+  });
+
+  it('leaves ordinary shell commands as debug-grade shell events', async () => {
+    const result = await ingestBashHook('ls -la /tmp');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('agent.shell.execute');
+    expect(row.severity).toBe('debug');
+    expect(row.retention_class).toBe('debug');
+  });
+
+  it('does not misclassify a read that merely mentions send/mail', async () => {
+    const result = await ingestBashHook('m365 outlook message list --folderName inbox');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('agent.shell.execute');
+    expect(row.severity).toBe('debug');
+  });
+
+  it('does not classify a grep for the sendMail token as an email send', async () => {
+    const result = await ingestBashHook('grep -R sendMail docs/');
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('agent.shell.execute');
+    expect(row.severity).toBe('debug');
+  });
+
+  it('classifies a Graph /sendMail POST as email.send', async () => {
+    const result = await ingestBashHook(
+      'm365 request -u "https://graph.microsoft.com/v1.0/me/sendMail" -m post -b @body.json'
+    );
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('email.send');
+  });
+
+  it('classifies path-qualified and wrapped noxctl invocations as accounting', async () => {
+    const result = await ingestBashHook("bash -lc './noxctl invoice create --amount 8500'");
+    expect(result.ok).toBe(true);
+    const row = storedRow();
+    expect(row.event_type).toBe('accounting.booking.create');
+    expect(row.severity).toBe('significant');
+  });
+});
+
+// ============================================================
+// Write-scope enforcement on ingest endpoints (Issue #9 / Codex #14)
+//
+// Once read-only keys become real (GET endpoints now require 'read'), the
+// write paths must reject read-only keys — otherwise a read consumer could
+// forge events into the append-only log.
+// ============================================================
+
+describe('write scope enforcement', () => {
+  function newPipeline() {
+    const worker = new AppendWorker(db);
+    return new IngestPipeline(db, worker);
+  }
+
+  it('rejects a read-only key on single ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingest(`Bearer ${key}`, {
+      event_type: 'accounting.booking.create',
+      severity: 'significant',
+      action: { verb: 'create', resource_type: 'voucher' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+  });
+
+  it('rejects a read-only key on batch ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingestBatch(`Bearer ${key}`, { events: [] });
+    expect('ok' in result && result.ok === false).toBe(true);
+    if ('status' in result) expect(result.status).toBe(403);
+  });
+
+  it('rejects a read-only key on hook ingest (403)', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    const result = await newPipeline().ingestHook(`Bearer ${key}`, {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'noxctl invoice create' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+  });
+
+  it('allows an admin key to write', async () => {
+    const { key } = registerApiKey(db, 'root', ['admin']);
+    const result = await newPipeline().ingest(`Bearer ${key}`, {
+      event_type: 'accounting.booking.create',
+      severity: 'significant',
+      action: { verb: 'create', resource_type: 'voucher' },
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
+// ============================================================
+// Batch ingest accepts hook-format events (Issue #9)
+//
+// sync-outbox.sh posts raw hook-format lines to /api/events/batch.
+// The batch path must transform hook-format events (as the single-hook
+// endpoint does) while still accepting full-format events.
+// ============================================================
+
+describe('batch ingest — hook-format events', () => {
+  it('transforms and classifies hook-format events, skipping filtered ones', async () => {
+    const { key } = registerApiKey(db, 'claude-code', ['write']);
+    const worker = new AppendWorker(db);
+    const pipeline = new IngestPipeline(db, worker);
+
+    const result = await pipeline.ingestBatch(`Bearer ${key}`, {
+      events: [
+        {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'noxctl invoice create --amount 21000' },
+          session_id: 's',
+        },
+        // A Read tool call is not significant — should be filtered, not rejected
+        {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Read',
+          tool_input: { file_path: '/tmp/x' },
+          session_id: 's',
+        },
+        {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          tool_input: { command: 'git status' },
+          session_id: 's',
+        },
+      ],
+    });
+
+    expect('ok' in result && result.ok === false).toBe(false);
+    const batch = result as BatchIngestResult;
+    expect(batch.accepted).toBe(2); // noxctl + git status
+    expect(batch.filtered).toBe(1); // Read
+    expect(batch.rejected).toBe(0);
+
+    const types = (
+      db.prepare('SELECT event_type FROM audit_events ORDER BY id').all() as Array<{ event_type: string }>
+    ).map(r => r.event_type);
+    expect(types).toContain('accounting.booking.create');
+    expect(types).toContain('agent.shell.execute');
+  });
+
+  it('still accepts full-format events in a batch', async () => {
+    const { key } = registerApiKey(db, 'noxctl', ['write']);
+    const worker = new AppendWorker(db);
+    const pipeline = new IngestPipeline(db, worker);
+
+    const result = await pipeline.ingestBatch(`Bearer ${key}`, {
+      events: [
+        {
+          event_type: 'accounting.booking.create',
+          severity: 'significant',
+          action: { verb: 'create', resource_type: 'voucher', resource_id: 'FV-1' },
+        },
+      ],
+    });
+
+    const batch = result as BatchIngestResult;
+    expect(batch.accepted).toBe(1);
+    expect(batch.filtered).toBe(0);
+    expect(batch.rejected).toBe(0);
   });
 });
