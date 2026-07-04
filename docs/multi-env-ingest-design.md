@@ -94,8 +94,16 @@ after transformation — the shape `validatePayload()` requires
 ```
 
 Fields the server always overrides regardless of what's sent: `component`
-(from the API key), `event_id` (if absent), `timestamp`/`server_timestamp`,
-`retention_class`, `evidence_grade`, `data_classification.erasure_eligible`.
+(from the API key), `retention_class`, `evidence_grade`,
+`data_classification.erasure_eligible`. `event_id` and `timestamp` are
+defaulted only if absent from the payload — if an emitter supplies them
+(e.g. replaying from an outbox, §6) they're kept as-is. The DB's
+`server_timestamp` column is always computed fresh server-side for
+ordering regardless of payload content, but emitters should still omit a
+`server_timestamp` field from the payload itself — nothing strips a
+client-supplied one out of the stored payload blob, it's just ignored for
+authority purposes.
+
 Emitters don't need to compute any of these — they only need `event_type`,
 `severity`, and `action`.
 
@@ -142,9 +150,16 @@ npx tsx src/index.ts register-key hugin write
 npx tsx src/index.ts register-key ratatoskr write
 ```
 
-Each gets its own `vrd_hugin_<hex>` / `vrd_ratatoskr_<hex>` key, scoped to
-`write` only (least privilege — neither needs `read` or `admin`). Two
-sub-decisions this doc flags rather than resolves:
+Each gets its own `vrd_hugin_<hex>` / `vrd_ratatoskr_<hex>` key, requested
+with `write` scope only since neither needs `read` or `admin`. **Caveat:**
+`scopes` is currently stored metadata, not an enforced boundary —
+`createAuthenticator()` returns the stored scopes, but nothing in
+`server.ts`/`ingest.ts` actually checks them, and the `GET` routes require
+no auth at all today (tracked separately in #9). Requesting `write`-only
+is still worth doing (documents intent, costs nothing, and is ready to
+matter the day scope enforcement lands), but the real isolation this seam
+relies on right now is per-component key separation, not scope
+restriction. Two sub-decisions this doc flags rather than resolves:
 
 - **Secret storage on the Pi.** The laptop convention is macOS Keychain via
   `security find-generic-password`; the Pi has no Keychain equivalent. The
@@ -202,11 +217,16 @@ design borrows from it is the *pattern*, generalized:
    this sidesteps the exact bug issue #9 found in the laptop script.
 4. **Idempotency is already handled server-side**: `event_id` is
    client-supplied-or-generated and UNIQUE (`src/ingest.ts:152-155`,
-   `src/db.ts:47`). An emitter should generate `event_id` itself (a UUID)
-   before the first POST attempt and reuse the same value on retry/replay
-   from the outbox, so a flush that partially succeeded and gets retried
-   doesn't double-count — the duplicate simply 409s and is treated as
-   success by the flush job.
+   `src/db.ts:47`). `AppendWorker.appendOne()` (`src/hash-chain.ts:118-129`)
+   checks for an existing `event_id` *before* inserting and, if found,
+   returns that row's position/hash as a normal success — it does not error.
+   (A 409 is only possible in the narrow race where two inserts with the
+   same `event_id` reach the DB layer's UNIQUE constraint directly; the
+   pipeline's dedup check makes that effectively unreachable in practice.)
+   An emitter should generate `event_id` itself (a UUID) before the first
+   POST attempt and reuse the same value on retry/replay from the outbox —
+   a flush that partially succeeded and gets retried resolves as success
+   either way, whether via the dedup check or a 409.
 5. **Cap the outbox size** (mirror the laptop's `MAX_OUTBOX_LINES`) and
    alert — don't drop silently — if the cap is hit, since an uncapped outbox
    on a Pi with limited storage is its own failure mode.
