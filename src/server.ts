@@ -7,15 +7,34 @@ import Fastify from 'fastify';
 import type Database from 'better-sqlite3';
 import { IngestPipeline } from './ingest.js';
 import { AppendWorker, verifyChain } from './hash-chain.js';
+import { createAuthenticator, type Scope } from './auth.js';
 
-export function createServer(db: Database.Database) {
+export function createServer(db: Database.Database, opts: { logger?: boolean } = {}) {
   const appendWorker = new AppendWorker(db);
   const pipeline = new IngestPipeline(db, appendWorker);
+  const authenticate = createAuthenticator(db);
 
   const app = Fastify({
-    logger: true,
+    logger: opts.logger ?? true,
     bodyLimit: 256 * 1024, // 256 KB
   });
+
+  /**
+   * Enforce a scope on read endpoints. Returns an error descriptor when the
+   * caller is unauthenticated (401) or authenticated but lacking the scope
+   * (403); returns null when access is granted. The 'admin' scope grants all.
+   */
+  function requireScope(
+    authHeader: string | undefined,
+    scope: Scope,
+  ): { status: number; error: string } | null {
+    const auth = authenticate(authHeader);
+    if (!auth.ok) return { status: auth.status, error: auth.error };
+    if (!auth.scopes.includes(scope) && !auth.scopes.includes('admin')) {
+      return { status: 403, error: `Missing required scope: ${scope}` };
+    }
+    return null;
+  }
 
   // ============================================================
   // Health
@@ -106,7 +125,13 @@ export function createServer(db: Database.Database) {
       limit?: string;
       offset?: string;
     };
-  }>('/api/events', async (request) => {
+  }>('/api/events', async (request, reply) => {
+    const authErr = requireScope(request.headers.authorization, 'read');
+    if (authErr) {
+      reply.status(authErr.status);
+      return { error: authErr.error };
+    }
+
     const q = request.query;
 
     const conditions: string[] = [];
@@ -178,6 +203,12 @@ export function createServer(db: Database.Database) {
   });
 
   app.get<{ Params: { eventId: string } }>('/api/events/:eventId', async (request, reply) => {
+    const authErr = requireScope(request.headers.authorization, 'read');
+    if (authErr) {
+      reply.status(authErr.status);
+      return { error: authErr.error };
+    }
+
     const row = db.prepare(
       `SELECT event_id, timestamp_utc, server_timestamp, event_type, component,
               severity, retention_class, evidence_grade, payload,
@@ -200,7 +231,13 @@ export function createServer(db: Database.Database) {
   // Verify API
   // ============================================================
 
-  app.get<{ Querystring: { since?: string } }>('/api/verify', async (request) => {
+  app.get<{ Querystring: { since?: string } }>('/api/verify', async (request, reply) => {
+    const authErr = requireScope(request.headers.authorization, 'read');
+    if (authErr) {
+      reply.status(authErr.status);
+      return { error: authErr.error };
+    }
+
     const sinceId = request.query.since
       ? parseInt(request.query.since, 10)
       : undefined;
