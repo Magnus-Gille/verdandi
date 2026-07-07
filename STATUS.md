@@ -1,9 +1,15 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-04-03
-**Branch:** main
+**Last session:** 2026-07-07
+**Branch:** codex/verdandi-chain-checkpoint
 
 ## Completed This Session
+- Added a Verdandi checkpoint command for issue #16: verifies the hash chain,
+  records the current verified head in `checkpoints`, and optionally writes a
+  local JSON anchor.
+- Added daily systemd timer/service templates for checkpoint cadence.
+- Added checkpoint tests for verified heads, local anchors, empty chains, and
+  tamper detection.
 - Phase 1 landscape research (Hugin task, 40+ frameworks, 90+ sources) — `audit-log-landscape-research.md`
 - Phase 2 architecture proposal (Hugin task, 2100 lines) — `audit-log-architecture-proposal.md`
 - Adversarial review: Claude vs Codex, 2 rounds, 28 critique points
@@ -15,18 +21,18 @@
 - Grimnir services.json updated — commit `14dc1f7` (verdandi), `6a620ba` (grimnir)
 
 ## In Progress
-- Nothing actively in progress
+- PR pending for issue #16; deploy the timer on huginmunin after merge.
 
 ## Blockers
 - None
 
 ## Next Steps (Phase 2 scope)
-1. Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
-2. Noxctl native integration (emit events on Fortnox API calls directly)
-3. Hugin integration (emit task lifecycle events)
-4. Ratatoskr integration (emit Telegram command events)
-5. Outbox sync automation (launchd on laptop for periodic flush)
-6. Per-component API key scoping (read vs write separation)
+1. Deploy and enable `verdandi-checkpoint.timer` on huginmunin.
+2. Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
+3. Noxctl native integration (emit events on Fortnox API calls directly)
+4. Hugin integration (emit task lifecycle events)
+5. Ratatoskr integration (emit Telegram command events)
+6. Outbox sync automation (launchd on laptop for periodic flush)
 
 ## Phase 3 scope (later)
 - GDPR pseudonymization (verdandi-keys.db)

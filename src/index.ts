@@ -10,6 +10,8 @@ import { join } from 'path';
 import { initDatabase, getDataDir } from './db.js';
 import { createServer } from './server.js';
 import { registerApiKey } from './auth.js';
+import { createCheckpoint } from './checkpoint.js';
+import { verifyChain } from './hash-chain.js';
 
 const PORT = parseInt(process.env.VERDANDI_PORT ?? '3036', 10);
 const HOST = process.env.VERDANDI_HOST ?? '127.0.0.1';
@@ -49,11 +51,18 @@ async function main() {
   }
 
   if (command === 'verify') {
-    const { verifyChain } = await import('./hash-chain.js');
     const result = verifyChain(db);
     console.log(JSON.stringify(result, null, 2));
     db.close();
     process.exit(result.valid ? 0 : 1);
+  }
+
+  if (command === 'checkpoint') {
+    const anchorPath = process.argv[3] ?? process.env.VERDANDI_ANCHOR_PATH;
+    const result = createCheckpoint(db, { anchorPath });
+    console.log(JSON.stringify(result, null, 2));
+    db.close();
+    process.exit(result.verified ? 0 : 1);
   }
 
   // Default: start server
