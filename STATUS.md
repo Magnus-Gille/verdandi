@@ -1,7 +1,7 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-07-07
-**Branch:** codex/verdandi-chain-checkpoint
+**Last session:** 2026-07-08 (Codex close)
+**Branch:** main
 
 ## Completed This Session
 - Added a Verdandi checkpoint command for issue #16: verifies the hash chain,
@@ -19,9 +19,10 @@
 - Claude Code hooks wired (PostToolUse + PermissionRequest)
 - API keys registered for all 6 Grimnir components
 - Grimnir services.json updated — commit `14dc1f7` (verdandi), `6a620ba` (grimnir)
+- PR #17 for issue #16 merged as `3ae7d3c` after lint, build, tests, review, and green GitHub checks.
 
 ## In Progress
-- PR pending for issue #16; deploy the timer on huginmunin after merge.
+- Deploy and enable `verdandi-checkpoint.timer` on huginmunin.
 
 ## Blockers
 - None
