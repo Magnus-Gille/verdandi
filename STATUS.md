@@ -1,7 +1,25 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-07-08 (Codex close)
-**Branch:** main
+**Last session:** 2026-07-10 (Codex recovery preparation)
+**Branch:** `codex/verdandi-offline-recovery` (isolated worktree; not deployed)
+
+## 2026-07-10 recovery preparation
+
+- Live read-only evidence found the service inactive after `226/NAMESPACE`,
+  with no Verdandi DB/WAL/SHM on huginmunin's mounted filesystems or the NAS.
+- The live `.env` placed runtime data at
+  `/home/magnus/repos/verdandi/data`; Grimnir rsync deploy uses `--delete` and
+  did not preserve that directory. The 2026-07-08 deploy is the likely loss
+  mechanism, though no retained deployment log proves causality.
+- Prepared an image-first, four-hour-bounded ext4 recovery/new-genesis runbook,
+  a read-only candidate inspector, and tests enforcing canonical production
+  storage at `/home/magnus/.local/share/verdandi`.
+- No production data, service state, deployment, or remote branch was changed.
+
+## Current blocker
+
+- Physical access is required to shut down huginmunin, remove its SD card, and
+  acquire a read-only master image on a Linux recovery host.
 
 ## Completed This Session
 - Added a Verdandi checkpoint command for issue #16: verifies the hash chain,

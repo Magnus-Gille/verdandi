@@ -12,6 +12,7 @@ import { createServer } from './server.js';
 import { registerApiKey } from './auth.js';
 import { createCheckpoint } from './checkpoint.js';
 import { verifyChain } from './hash-chain.js';
+import { inspectRecoveryCandidate } from './recovery-inspect.js';
 
 const PORT = parseInt(process.env.VERDANDI_PORT ?? '3036', 10);
 const HOST = process.env.VERDANDI_HOST ?? '127.0.0.1';
@@ -19,6 +20,20 @@ const HOST = process.env.VERDANDI_HOST ?? '127.0.0.1';
 async function main() {
   // Handle CLI commands
   const command = process.argv[2];
+
+  // Recovery inspection must run before normal database initialization.
+  // initDatabase() enables WAL and migrations, which would mutate evidence.
+  if (command === 'inspect-recovery-candidate') {
+    const candidatePath = process.argv[3];
+    if (!candidatePath) {
+      console.error('Usage: verdandi inspect-recovery-candidate <copied-verdandi.db>');
+      process.exit(2);
+    }
+
+    const result = inspectRecoveryCandidate(candidatePath);
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(result.acceptable_for_restore ? 0 : 1);
+  }
 
   const dataDir = getDataDir();
   if (!existsSync(dataDir)) {

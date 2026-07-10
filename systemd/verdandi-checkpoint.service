@@ -1,6 +1,7 @@
 [Unit]
 Description=Verdandi hash-chain checkpoint
 After=verdandi.service
+AssertPathIsDirectory=/home/magnus/.local/share/verdandi
 
 [Service]
 Type=oneshot

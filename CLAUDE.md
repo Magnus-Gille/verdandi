@@ -59,6 +59,7 @@ npm start              # Production server
 # CLI
 npx tsx src/index.ts register-key <component> [scopes]   # Register API key
 npx tsx src/index.ts verify                               # Verify hash chain
+npx tsx src/index.ts inspect-recovery-candidate <db>      # Read-only recovery validation
 ```
 
 ## API endpoints
@@ -121,8 +122,12 @@ Hierarchical: `accounting.*`, `email.*`, `calendar.*`, `file.*`, `memory.*`, `ta
 
 - **Port:** 3036
 - **Host:** 127.0.0.1 (localhost only, accessed via Tailscale from laptop)
-- **Data dir:** `VERDANDI_DATA_DIR` env var or `./data/`
+- **Production data dir:** `/home/magnus/.local/share/verdandi` (outside the
+  rsync deployment checkout). `VERDANDI_DATA_DIR` or `./data/` remains useful
+  for development only.
 - **Systemd:** `verdandi.service` (persistent server, Restart=always)
+- **Recovery:** `docs/offline-recovery-and-new-genesis.md` is mandatory before
+  restoring a database candidate or creating a new production genesis.
 
 ## Testing
 

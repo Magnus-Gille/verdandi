@@ -2,19 +2,23 @@
 Description=Verdandi — Audit log for agentic actions (Grimnir accountability layer)
 After=network-online.target munin-memory.service
 Wants=network-online.target
+AssertPathIsDirectory=/home/magnus/.local/share/verdandi
 
 [Service]
 Type=simple
 WorkingDirectory=/home/magnus/repos/verdandi
 ExecStart=/usr/bin/node dist/index.js
-EnvironmentFile=/home/magnus/repos/verdandi/.env
+Environment=NODE_ENV=production
+Environment=VERDANDI_PORT=3036
+Environment=VERDANDI_HOST=127.0.0.1
+Environment=VERDANDI_DATA_DIR=/home/magnus/.local/share/verdandi
 Restart=always
 RestartSec=5
 
 # Security hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/magnus/repos/verdandi/data
+ReadWritePaths=/home/magnus/.local/share/verdandi
 PrivateTmp=yes
 NoNewPrivileges=yes
 
