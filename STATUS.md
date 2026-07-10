@@ -20,7 +20,10 @@
   the explicit `init-new-generation` command.
 - Formal PR review follow-up also makes recovery acceptance depend on unchanged
   source evidence, reports unvalidated external-anchor presence separately,
-  and uses a pipefail-safe inspection pipeline. Validation: 83 tests, build,
+  and uses a pipefail-safe inspection pipeline. A follow-up runtime-SQL audit
+  now validates every supported table column/default/PK, all indexes/foreign
+  keys, and prepares representative server/auth/append/checkpoint statements
+  before acceptance. Validation: 88 tests, build,
   lint, and diff checks pass.
 - No production data, service state, deployment, or remote branch was changed.
 

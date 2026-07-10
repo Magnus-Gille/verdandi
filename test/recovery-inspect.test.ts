@@ -124,7 +124,46 @@ describe('inspectRecoveryCandidate', () => {
     expect(result.schema_contract.violations).toEqual(expect.arrayContaining([
       expect.stringContaining('unsupported schema version'),
       'missing append-only trigger: prevent_event_update',
-      'missing audit_events index: idx_events_component',
+      'missing required index: idx_events_component',
+    ]));
+    expect(result.acceptable_for_restore).toBe(false);
+  });
+
+  it.each([
+    ['trace_id', 'DROP INDEX idx_events_trace'],
+    ['session_id', 'DROP INDEX idx_events_session'],
+    ['parent_event_id', null],
+    ['checkpoint_id', null],
+  ])('rejects an audit_events schema missing runtime column %s', async (column, prerequisite) => {
+    const dbPath = join(tempDir, `missing-${column}.db`);
+    const db = initDatabase(dbPath);
+    await appendEvent(db, `evt-missing-${column}`);
+    if (prerequisite) db.exec(prerequisite);
+    db.exec(`ALTER TABLE audit_events DROP COLUMN ${column}`);
+    db.close();
+
+    const result = inspectRecoveryCandidate(dbPath);
+
+    expect(result.schema_contract.violations).toContain(
+      `audit_events missing column: ${column}`
+    );
+    expect(result.acceptable_for_restore).toBe(false);
+  });
+
+  it('rejects omitted api-key and auxiliary-table columns used by the supported schema', async () => {
+    const dbPath = join(tempDir, 'missing-runtime-columns.db');
+    const db = initDatabase(dbPath);
+    await appendEvent(db, 'evt-missing-runtime-columns');
+    db.exec('ALTER TABLE api_keys DROP COLUMN revoked_at');
+    db.exec('ALTER TABLE session_details DROP COLUMN context_snapshot');
+    db.close();
+
+    const result = inspectRecoveryCandidate(dbPath);
+
+    expect(result.schema_contract.violations).toEqual(expect.arrayContaining([
+      'api_keys missing column: revoked_at',
+      'session_details missing column: context_snapshot',
+      expect.stringContaining('runtime SQL incompatible (authenticate key)'),
     ]));
     expect(result.acceptable_for_restore).toBe(false);
   });
