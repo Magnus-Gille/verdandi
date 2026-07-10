@@ -86,7 +86,10 @@ export function validateGeneration(dataDir: string): GenerationValidation {
     }
 
     const schema = inspectSchemaContract(db);
-    if (!schema.valid) errors.push(...schema.violations.map((item) => `schema: ${item}`));
+    if (!schema.valid) {
+      errors.push(...schema.violations.map((item) => `schema: ${item}`));
+      return { valid: false, errors, marker };
+    }
     const chain = verifyChain(db);
     if (!chain.valid) errors.push(`hash chain: ${chain.error ?? 'invalid'}`);
     const checkpoints = verifyCheckpointHistory(db);

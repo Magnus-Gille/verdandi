@@ -98,7 +98,7 @@ export function inspectRecoveryCandidate(
     let chain: ReturnType<typeof verifyChain> | null = null;
     let checkpointHistory: CheckpointHistoryResult | null = null;
 
-    if (requiredTablesPresent) {
+    if (schemaContract.valid) {
       const events = db.prepare(`
         SELECT
           COUNT(*) AS event_count,

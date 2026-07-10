@@ -40,6 +40,18 @@ const REQUIRED_EVENT_COLUMNS = [
   'created_at',
 ] as const;
 
+const REQUIRED_CHECKPOINT_COLUMNS = [
+  'id',
+  'checkpoint_at',
+  'last_event_id',
+  'last_entry_hash',
+  'tsa_request',
+  'tsa_response',
+  'tsa_authority',
+  'verified',
+  'created_at',
+] as const;
+
 export interface SchemaContractResult {
   valid: boolean;
   schema_version: number | null;
@@ -61,13 +73,17 @@ export function inspectSchemaContract(db: Database.Database): SchemaContractResu
 
   let schemaVersion: number | null = null;
   if (tableNames.has('schema_version')) {
-    schemaVersion = (db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as {
-      version: number | null;
-    }).version;
+    const versions = (db.prepare('SELECT version FROM schema_version ORDER BY version').all() as Array<{
+      version: number;
+    }>).map((row) => row.version);
+    schemaVersion = versions.at(-1) ?? null;
     if (schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
       violations.push(
         `unsupported schema version: ${String(schemaVersion)} (supported: ${SUPPORTED_SCHEMA_VERSION})`
       );
+    }
+    if (JSON.stringify(versions) !== JSON.stringify([SUPPORTED_SCHEMA_VERSION])) {
+      violations.push(`unexpected schema version history: ${JSON.stringify(versions)}`);
     }
   }
 
@@ -128,6 +144,9 @@ export function inspectSchemaContract(db: Database.Database): SchemaContractResu
         pk: number;
       }>).map((column) => [column.name, column])
     );
+    for (const name of REQUIRED_CHECKPOINT_COLUMNS) {
+      if (!columns.has(name)) violations.push(`checkpoints missing column: ${name}`);
+    }
     for (const name of ['checkpoint_at', 'last_event_id', 'last_entry_hash', 'verified', 'created_at']) {
       if (columns.get(name)?.notnull !== 1) {
         violations.push(`checkpoints.${name} must exist and be NOT NULL`);
