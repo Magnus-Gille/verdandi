@@ -59,14 +59,16 @@ export function inspectRecoveryCandidate(candidatePath: string): RecoveryInspect
   const candidate = realpathSync(candidatePath);
   const before = evidenceFiles(candidate);
   const inspectionDir = mkdtempSync(join(tmpdir(), 'verdandi-recovery-inspect-'));
-  for (const file of before) {
-    copyFileSync(file.path, join(inspectionDir, basename(file.path)));
-  }
-  const inspectionCandidate = join(inspectionDir, basename(candidate));
-  const db = new Database(inspectionCandidate, { readonly: true, fileMustExist: true });
+  let db: Database.Database | undefined;
   let inspection: Omit<RecoveryInspection, 'evidence_files_unchanged'>;
 
   try {
+    for (const file of before) {
+      copyFileSync(file.path, join(inspectionDir, basename(file.path)));
+    }
+    const inspectionCandidate = join(inspectionDir, basename(candidate));
+    db = new Database(inspectionCandidate, { readonly: true, fileMustExist: true });
+
     const integrityMessages = (db.pragma('integrity_check') as Array<Record<string, string>>)
       .flatMap((row) => Object.values(row));
     const integrityOk = integrityMessages.length === 1 && integrityMessages[0] === 'ok';
@@ -153,7 +155,7 @@ export function inspectRecoveryCandidate(candidatePath: string): RecoveryInspect
       acceptable_for_restore: acceptableForRestore,
     };
   } finally {
-    db.close();
+    db?.close();
     rmSync(inspectionDir, { recursive: true, force: true });
   }
 

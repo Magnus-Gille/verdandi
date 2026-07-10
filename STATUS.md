@@ -14,6 +14,9 @@
 - Prepared an image-first, four-hour-bounded ext4 recovery/new-genesis runbook,
   a read-only candidate inspector, and tests enforcing canonical production
   storage at `/home/magnus/.local/share/verdandi`.
+- Production startup now requires an explicit nonempty `generation.json`, and
+  checkpointing additionally requires an existing nonempty `verdandi.db`; an
+  operator-created empty directory cannot silently create a generation.
 - No production data, service state, deployment, or remote branch was changed.
 
 ## Current blocker

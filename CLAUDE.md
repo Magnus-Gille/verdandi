@@ -125,6 +125,9 @@ Hierarchical: `accounting.*`, `email.*`, `calendar.*`, `file.*`, `memory.*`, `ta
 - **Production data dir:** `/home/magnus/.local/share/verdandi` (outside the
   rsync deployment checkout). `VERDANDI_DATA_DIR` or `./data/` remains useful
   for development only.
+- **Generation marker:** production startup requires a nonempty
+  `/home/magnus/.local/share/verdandi/generation.json`; a recovered chain and a
+  new genesis must state their different continuity claims there.
 - **Systemd:** `verdandi.service` (persistent server, Restart=always)
 - **Recovery:** `docs/offline-recovery-and-new-genesis.md` is mandatory before
   restoring a database candidate or creating a new production genesis.

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -83,5 +83,20 @@ describe('inspectRecoveryCandidate', () => {
       'schema_version',
     ]));
     expect(result.acceptable_for_restore).toBe(false);
+  });
+
+  it('removes its disposable inspection directory when SQLite inspection fails', () => {
+    const dbPath = join(tempDir, 'corrupt.db');
+    writeFileSync(dbPath, 'not a sqlite database');
+    const before = new Set(
+      readdirSync(tmpdir()).filter((name) => name.startsWith('verdandi-recovery-inspect-'))
+    );
+
+    expect(() => inspectRecoveryCandidate(dbPath)).toThrow();
+
+    const after = readdirSync(tmpdir()).filter(
+      (name) => name.startsWith('verdandi-recovery-inspect-') && !before.has(name)
+    );
+    expect(after).toEqual([]);
   });
 });

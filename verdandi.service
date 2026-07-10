@@ -7,6 +7,7 @@ AssertPathIsDirectory=/home/magnus/.local/share/verdandi
 [Service]
 Type=simple
 WorkingDirectory=/home/magnus/repos/verdandi
+ExecStartPre=/usr/bin/test -s /home/magnus/.local/share/verdandi/generation.json
 ExecStart=/usr/bin/node dist/index.js
 Environment=NODE_ENV=production
 Environment=VERDANDI_PORT=3036
