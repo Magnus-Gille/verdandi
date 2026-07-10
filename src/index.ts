@@ -5,7 +5,7 @@
  * "Verdandi, the Norn of the present, weaves what is becoming."
  */
 
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { initDatabase, getDataDir } from './db.js';
 import { createServer } from './server.js';
@@ -13,6 +13,7 @@ import { registerApiKey } from './auth.js';
 import { createCheckpoint } from './checkpoint.js';
 import { verifyChain } from './hash-chain.js';
 import { inspectRecoveryCandidate } from './recovery-inspect.js';
+import { initializeNewGeneration, validateGeneration } from './generation.js';
 
 const PORT = parseInt(process.env.VERDANDI_PORT ?? '3036', 10);
 const HOST = process.env.VERDANDI_HOST ?? '127.0.0.1';
@@ -36,7 +37,43 @@ async function main() {
   }
 
   const dataDir = getDataDir();
-  if (!existsSync(dataDir)) {
+
+  if (command === 'validate-generation') {
+    const result = validateGeneration(dataDir);
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(result.valid ? 0 : 1);
+  }
+
+  if (command === 'init-new-generation') {
+    const operator = process.argv[3];
+    const incident = process.argv[4];
+    const evidencePath = process.argv[5];
+    if (!operator || !incident || !evidencePath) {
+      console.error(
+        'Usage: verdandi init-new-generation <operator> <incident> <recovery-evidence.json>'
+      );
+      process.exit(2);
+    }
+    const recoveryEvidence = JSON.parse(readFileSync(evidencePath, 'utf8')) as unknown;
+    if (typeof recoveryEvidence !== 'object' || recoveryEvidence === null || Array.isArray(recoveryEvidence)) {
+      throw new Error('recovery evidence must be a JSON object');
+    }
+    const result = initializeNewGeneration(dataDir, {
+      operator,
+      incident,
+      recoveryEvidence: recoveryEvidence as Record<string, unknown>,
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    const generation = validateGeneration(dataDir);
+    if (!generation.valid) {
+      console.error(`Refusing production startup: ${generation.errors.join('; ')}`);
+      process.exit(1);
+    }
+  } else if (!existsSync(dataDir)) {
     mkdirSync(dataDir, { recursive: true });
   }
 

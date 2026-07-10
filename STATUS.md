@@ -14,9 +14,14 @@
 - Prepared an image-first, four-hour-bounded ext4 recovery/new-genesis runbook,
   a read-only candidate inspector, and tests enforcing canonical production
   storage at `/home/magnus/.local/share/verdandi`.
-- Production startup now requires an explicit nonempty `generation.json`, and
-  checkpointing additionally requires an existing nonempty `verdandi.db`; an
-  operator-created empty directory cannot silently create a generation.
+- Production startup/checkpointing now validate an existing nonempty DB, strict
+  generation metadata + adopted head, supported critical schema, full event
+  chain, and claimed-valid checkpoint history. New DB creation is isolated in
+  the explicit `init-new-generation` command.
+- Formal PR review follow-up also makes recovery acceptance depend on unchanged
+  source evidence, reports unvalidated external-anchor presence separately,
+  and uses a pipefail-safe inspection pipeline. Validation: 83 tests, build,
+  lint, and diff checks pass.
 - No production data, service state, deployment, or remote branch was changed.
 
 ## Current blocker

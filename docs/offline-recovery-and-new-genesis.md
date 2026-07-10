@@ -32,9 +32,11 @@ Read-only checks on 2026-07-10 established:
 
 The production storage contract after recovery is
 `/home/magnus/.local/share/verdandi`. Runtime state must never live below the
-rsync target `/home/magnus/repos/verdandi` again. The service also requires a
-nonempty `generation.json` marker in that directory. Creating the directory
-alone cannot silently initialize a new database.
+rsync target `/home/magnus/repos/verdandi` again. Before normal startup, the
+service validates a nonempty existing database, the complete generation-marker
+schema and origin/continuity pairing, the bound adoption head, the critical
+SQLite schema, the event chain, and every claimed-valid checkpoint. Creating
+the directory or an arbitrary marker cannot silently initialize a database.
 
 ## Hard safety rules
 
@@ -58,8 +60,8 @@ alone cannot silently initialize a new database.
 
 `generation.json` is the operator's explicit authorization to start one audit
 generation. It is not a substitute for a checkpoint or proof of continuity.
-The reviewed systemd units only enforce that it is nonempty, so validate it
-before installation and store it with mode `0600`.
+The reviewed service and checkpoint units run Verdandi's `validate-generation`
+command before execution. Store the marker with mode `0600`.
 
 Required fields are:
 
@@ -72,21 +74,28 @@ Required fields are:
   "origin": "recovered or new-genesis",
   "continuity": "recovered-chain-only or none",
   "incident": "verdandi-data-loss-2026-07",
-  "recovery_evidence": {}
+  "recovery_evidence": { "master_image_sha256": "..." },
+  "database_binding": {
+    "schema_version": 1,
+    "adopted_event_count": 0,
+    "adopted_last_event_id": 0,
+    "adopted_last_entry_hash": "GENESIS"
+  }
 }
 ```
 
-Before the first service start:
+For `new-genesis`, all three adopted head values must describe an empty
+`GENESIS`. For `recovered`, copy the event count, last event id, and last entry
+hash from the accepted inspection report. Later appends may move the live head;
+startup still proves that the adopted recovered event/hash remains present.
+
+Before every first service start or checkpoint enablement:
 
 ```bash
-jq -e '
-  .version == 1 and
-  (.generation | type == "string" and length > 0) and
-  (.created_at | type == "string" and length > 0) and
-  ((.origin == "recovered" and .continuity == "recovered-chain-only") or
-   (.origin == "new-genesis" and .continuity == "none"))
-' /home/magnus/.local/share/verdandi/generation.json
 chmod 0600 /home/magnus/.local/share/verdandi/generation.json
+NODE_ENV=production \
+VERDANDI_DATA_DIR=/home/magnus/.local/share/verdandi \
+  node /home/magnus/repos/verdandi/dist/index.js validate-generation
 ```
 
 The only valid pairings are `recovered` + `recovered-chain-only` and
@@ -189,6 +198,7 @@ For every candidate:
 3. Run Verdandi's read-only inspector from a clean checkout of this revision:
 
    ```bash
+   set -euo pipefail
    npm ci
    npm run build
    node dist/index.js inspect-recovery-candidate /recovery/candidate-01/verdandi.db \
@@ -201,10 +211,19 @@ calls the migration/initialization path. It exits zero only when all of these
 are true:
 
 - SQLite `integrity_check` is `ok`;
-- all required Verdandi tables exist;
+- schema version is exactly the supported version;
+- the full critical schema contract is present, including required tables,
+  columns/constraints, indexes, event-id/key uniqueness, and both append-only
+  triggers;
 - at least one historical event exists;
 - the complete SHA-256 event chain verifies;
+- every checkpoint marked `verified=1` points to the claimed event/hash or
+  valid genesis and claimed-valid history is monotonic;
 - evidence-file metadata and hashes are unchanged by inspection.
+
+RFC 3161/TSA response presence is reported separately as
+`presence-only-unvalidated`; it never upgrades local checkpoint validity or
+recovery acceptance without a future cryptographic TSA verifier.
 
 Record the event count and timestamp range. A count materially below the prior
 67k+ observation is not automatically invalid, but must be called out as a
@@ -240,7 +259,9 @@ sudo losetup --detach "$loopdev"
    event count/head, master-image hash, and an honest continuity statement. Use
    `continuity: "recovered-chain-only"`: this means the recovered chain verifies;
    it does not claim an off-host anchor or proof that no tail events were lost.
-   Install the reviewed service unit. Do not enable the checkpoint timer yet.
+   Bind `database_binding` to the accepted inspection report. Run
+   `validate-generation`; it must return `valid: true`. Install the reviewed
+   service unit. Do not enable the checkpoint timer yet.
 6. Start Verdandi once. Verify `/health`, authenticated `/api/verify`, event
    count, timestamp range, and `last_entry_hash` against the inspection report.
 7. Stop on any discrepancy. Otherwise create the first local checkpoint and
@@ -249,14 +270,9 @@ sudo losetup --detach "$loopdev"
 
 ### If no acceptable candidate exists: documented new genesis
 
-Do not place an empty database silently. Create
-`/home/magnus/.local/share/verdandi/generation.json` first, containing:
+Do not place an empty database or marker manually. First create a recovery
+evidence JSON file containing:
 
-- `generation`: a new UUID;
-- `origin`: `"new-genesis"`;
-- `continuity`: `"none"`;
-- `created_at` and operator;
-- incident identifier and this runbook revision;
 - the master-image SHA-256 and recovery-log SHA-256 values;
 - recovery passes attempted and their outcomes;
 - explicit statement that the previous audit chain was lost and continuity is
@@ -268,11 +284,20 @@ Then:
 
 1. Create the canonical directory with mode `0700`; confirm it is outside the
    deployment checkout.
-2. Install the reviewed unit and ensure the obsolete checkout-local `data/`
-   path is neither present nor configured.
-3. Start Verdandi to create the new database. Its event count must begin at
-   zero and its generation boundary must be reported as an incident, not as a
-   successful restore.
+2. Run the only supported new-generation initializer. It refuses any existing
+   DB/marker, creates the schema and marker, binds the marker to the empty
+   `GENESIS` head, and validates the result before returning:
+
+   ```bash
+   VERDANDI_DATA_DIR=/home/magnus/.local/share/verdandi \
+     node /home/magnus/repos/verdandi/dist/index.js init-new-generation \
+       Magnus verdandi-data-loss-2026-07 /recovery/new-genesis-evidence.json
+   ```
+
+3. Install the reviewed unit and ensure the obsolete checkout-local `data/`
+   path is neither present nor configured. Run `validate-generation` again.
+   Its event count must be zero and its generation boundary must be reported as
+   an incident, not as a successful restore.
 4. Register fresh per-component keys. Do not assume any old key identity or
    scope survived the lost database.
 5. Emit one explicit `system.audit_genesis`/incident event when that taxonomy
@@ -284,11 +309,11 @@ Then:
 
 - Verdandi's service and checkpoint units must both use
   `/home/magnus/.local/share/verdandi`.
-- The service unit asserts that the directory already exists. A deployment
-  also requires a nonempty `generation.json`; a directory alone cannot silently
-  create a new empty generation.
-- The checkpoint unit requires both `generation.json` and an existing nonempty
-  `verdandi.db`, so checkpointing cannot initialize an empty database.
+- The service and checkpoint units call `validate-generation`, which requires a
+  nonempty existing DB, validates marker schema/pairing and adoption binding,
+  and verifies schema, chain, and claimed-valid checkpoint history.
+- A new DB may only be created through `init-new-generation`; normal production
+  startup refuses missing DB/metadata instead of initializing them.
 - Grimnir's deploy tooling must separately reject or preserve any service whose
   runtime data is below an rsync `--delete` target.
 - The NAS anchor copy must be automated and monitored; a checkpoint stored only

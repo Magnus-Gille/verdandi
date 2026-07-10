@@ -60,6 +60,8 @@ npm start              # Production server
 npx tsx src/index.ts register-key <component> [scopes]   # Register API key
 npx tsx src/index.ts verify                               # Verify hash chain
 npx tsx src/index.ts inspect-recovery-candidate <db>      # Read-only recovery validation
+npx tsx src/index.ts validate-generation                  # Fail-closed production preflight
+npx tsx src/index.ts init-new-generation <operator> <incident> <evidence.json>
 ```
 
 ## API endpoints
@@ -125,9 +127,10 @@ Hierarchical: `accounting.*`, `email.*`, `calendar.*`, `file.*`, `memory.*`, `ta
 - **Production data dir:** `/home/magnus/.local/share/verdandi` (outside the
   rsync deployment checkout). `VERDANDI_DATA_DIR` or `./data/` remains useful
   for development only.
-- **Generation marker:** production startup requires a nonempty
-  `/home/magnus/.local/share/verdandi/generation.json`; a recovered chain and a
-  new genesis must state their different continuity claims there.
+- **Generation gate:** production startup validates an existing nonempty DB,
+  the full `/home/magnus/.local/share/verdandi/generation.json` contract and
+  adopted head, the critical schema, event chain, and checkpoint history. Only
+  `init-new-generation` may create a new production DB.
 - **Systemd:** `verdandi.service` (persistent server, Restart=always)
 - **Recovery:** `docs/offline-recovery-and-new-genesis.md` is mandatory before
   restoring a database candidate or creating a new production genesis.
@@ -139,4 +142,5 @@ npm test                # All tests
 npx vitest run --reporter=verbose   # Verbose output
 ```
 
-Tests use in-memory SQLite (`:memory:`) — no file cleanup needed.
+Most tests use in-memory SQLite (`:memory:`); recovery/generation contract tests
+use automatically cleaned temporary directories.
