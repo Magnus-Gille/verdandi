@@ -1,7 +1,36 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-07-08 (Codex close)
-**Branch:** main
+**Last session:** 2026-07-10 (Codex recovery preparation)
+**Branch:** `codex/verdandi-offline-recovery` (isolated worktree; not deployed)
+
+## 2026-07-10 recovery preparation
+
+- Live read-only evidence found the service inactive after `226/NAMESPACE`,
+  with no Verdandi DB/WAL/SHM on huginmunin's mounted filesystems or the NAS.
+- The live `.env` placed runtime data at
+  `/home/magnus/repos/verdandi/data`; Grimnir rsync deploy uses `--delete` and
+  did not preserve that directory. The 2026-07-08 deploy is the likely loss
+  mechanism, though no retained deployment log proves causality.
+- Prepared an image-first, four-hour-bounded ext4 recovery/new-genesis runbook,
+  a read-only candidate inspector, and tests enforcing canonical production
+  storage at `/home/magnus/.local/share/verdandi`.
+- Production startup/checkpointing now validate an existing nonempty DB, strict
+  generation metadata + adopted head, supported critical schema, full event
+  chain, and claimed-valid checkpoint history. New DB creation is isolated in
+  the explicit `init-new-generation` command.
+- Formal PR review follow-up also makes recovery acceptance depend on unchanged
+  source evidence, reports unvalidated external-anchor presence separately,
+  and uses a pipefail-safe inspection pipeline. A follow-up runtime-SQL audit
+  now validates every supported table column/default/PK, all indexes/foreign
+  keys, and prepares representative server/auth/append/checkpoint statements
+  before acceptance. Validation: 88 tests, build,
+  lint, and diff checks pass.
+- No production data, service state, deployment, or remote branch was changed.
+
+## Current blocker
+
+- Physical access is required to shut down huginmunin, remove its SD card, and
+  acquire a read-only master image on a Linux recovery host.
 
 ## Completed This Session
 - Added a Verdandi checkpoint command for issue #16: verifies the hash chain,

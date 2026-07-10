@@ -1,6 +1,7 @@
 [Unit]
 Description=Verdandi hash-chain checkpoint
 After=verdandi.service
+AssertPathIsDirectory=/home/magnus/.local/share/verdandi
 
 [Service]
 Type=oneshot
@@ -8,6 +9,7 @@ User=magnus
 WorkingDirectory=/home/magnus/repos/verdandi
 Environment=VERDANDI_DATA_DIR=/home/magnus/.local/share/verdandi
 Environment=VERDANDI_ANCHOR_PATH=/home/magnus/.local/share/verdandi/checkpoints/latest.json
+ExecStartPre=/usr/bin/env node /home/magnus/repos/verdandi/dist/index.js validate-generation
 ExecStart=/usr/bin/env node /home/magnus/repos/verdandi/dist/index.js checkpoint
 TimeoutStartSec=60
 NoNewPrivileges=true
