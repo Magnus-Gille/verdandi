@@ -7,15 +7,25 @@
 
 - PR #18 merged as `532677d`, landing the evidence-safe offline recovery
   tooling, canonical production-storage contract, and fail-closed generation
-  gate. The canonical checkout is current with `origin/main`.
-- Verdandi production remains intentionally inactive and undeployed while the
-  original database recovery is pending. Do not start `verdandi.service`,
-  enable `verdandi-checkpoint.timer`, or initialize a new production genesis
-  before the bounded recovery attempt and an explicit recovery decision.
-- Grimnir's persistent-data deployment guard is live, preventing future
-  service deploys from silently deleting untracked persistent data.
-- The M5 recovery toolchain and protected workspace are ready, with
-  approximately 1.46 TiB free for the SD-card image and recovery output.
+  gate. The canonical checkout is current with `origin/main`, but this current
+  code has not been deployed.
+- The old MVP installation remains on huginmunin. On 2026-07-10 its
+  `verdandi.service` was live-verified disabled and inactive, and
+  `verdandi-checkpoint.timer` was absent/inactive; the service will not
+  auto-start on reboot. Its installed unit still has `Restart=always`, so do
+  not start it manually before recovery is complete.
+- Verdandi production remains intentionally inactive while the original
+  database recovery is pending. Do not deploy Verdandi, start its service,
+  enable checkpointing, adopt a database candidate, or initialize a new
+  production genesis before the bounded recovery attempt and an explicit
+  recovery decision.
+- Grimnir PR #74, merged as `a3eb01f`, is deployed. Its fail-closed
+  persistent-data guard prevents service deploys from silently deleting
+  untracked persistent data.
+- The M5 recovery toolchain and protected workspace are ready. The known
+  source card is approximately 63.3 GB; the M5 had approximately 1.46 TiB free
+  on 2026-07-10, ample for the protected master image, working image, and
+  recovery output.
 
 ## 2026-07-10 recovery preparation
 
@@ -39,8 +49,6 @@
   keys, and prepares representative server/auth/append/checkpoint statements
   before acceptance. Validation: 88 tests, build,
   lint, and diff checks pass.
-- PR #18 merged as `532677d`; none of its recovery tooling has been deployed
-  and no production data or service state was changed.
 
 ## Completed This Session
 - Added a Verdandi checkpoint command for issue #16: verifies the hash chain,
@@ -62,31 +70,35 @@
 - PR #17 for issue #16 merged as `3ae7d3c` after lint, build, tests, review, and green GitHub checks.
 
 ## In Progress
-- Awaiting the physical recovery window: cleanly shut down huginmunin, connect
-  its original boot SD to the M5 reader, and run the bounded image-first
-  recovery procedure.
+- Awaiting a coordinated physical recovery window: cleanly shutting down
+  huginmunin also interrupts its co-hosted services. The original boot SD must
+  then be connected to the M5 reader for the bounded image-first recovery.
 
 ## Blockers
-- Physical access to huginmunin's original boot SD is required. The blocker is
-  limited to a clean shutdown and connecting that card to the prepared M5
-  recovery reader/workspace.
+- Recovery requires physical access plus a coordinated huginmunin outage so
+  its original boot SD can be moved to the prepared M5 recovery
+  reader/workspace without an unsafe shutdown or source-card write.
 
 ## Next Steps (Phase 2 scope)
-1. Cleanly shut down huginmunin and connect its original boot SD to the M5
-   reader without starting or writing to the card.
+1. Coordinate the outage for huginmunin's co-hosted services, cleanly shut the
+   host down, remove its original boot SD, and insert the card into the M5
+   reader. Immediately unmount any automounted partitions, set the whole
+   source device read-only, and verify it with `blockdev --getro` per the
+   runbook before imaging. Never boot from the source card.
 2. Acquire the protected master image and run the four-hour-bounded recovery
    procedure from `docs/offline-recovery-and-new-genesis.md`.
-3. Validate any recovered candidate read-only, then explicitly decide whether
-   to adopt it or authorize a new genesis. Until that decision, do not start
-   the service, enable checkpointing, deploy Verdandi, or initialize genesis.
-4. After recovery/adoption is complete, deploy the merged safeguards, start
-   Verdandi, verify production health and generation state, then enable
-   `verdandi-checkpoint.timer`.
-5. Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
-6. Noxctl native integration (emit events on Fortnox API calls directly)
-7. Hugin integration (emit task lifecycle events)
-8. Ratatoskr integration (emit Telegram command events)
-9. Outbox sync automation (launchd on laptop for periodic flush)
+3. Validate any recovered candidate read-only and record an explicit decision
+   to adopt it or authorize a new genesis. Do not execute either path yet.
+4. Deploy PR #18's recovery and generation safeguards from current `main`.
+5. Under those deployed safeguards, either adopt the accepted candidate or,
+   only if explicitly authorized, run `init-new-generation`. Then start
+   Verdandi and verify production health, generation state, and hash-chain
+   integrity. Enable `verdandi-checkpoint.timer` last.
+6. Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
+7. Noxctl native integration (emit events on Fortnox API calls directly)
+8. Hugin integration (emit task lifecycle events)
+9. Ratatoskr integration (emit Telegram command events)
+10. Outbox sync automation (launchd on laptop for periodic flush)
 
 ## Phase 3 scope (later)
 - GDPR pseudonymization (verdandi-keys.db)
