@@ -10,6 +10,24 @@ interface RedactionRule {
   replacement: string;
 }
 
+const SENSITIVE_FIELD_LABELS = new Map<string, string>([
+  ['authorization', 'auth'],
+  ['proxyauthorization', 'auth'],
+  ['password', 'password'],
+  ['passwd', 'password'],
+  ['pwd', 'password'],
+  ['apikey', 'api_key'],
+  ['secretkey', 'api_key'],
+  ['clientsecret', 'api_key'],
+  ['accesstoken', 'token'],
+  ['authtoken', 'token'],
+  ['idtoken', 'token'],
+  ['refreshtoken', 'token'],
+  ['token', 'token'],
+  ['privatekey', 'private_key'],
+  ['secret', 'secret'],
+]);
+
 const REDACTION_RULES: RedactionRule[] = [
   {
     name: 'bearer_token',
@@ -24,8 +42,8 @@ const REDACTION_RULES: RedactionRule[] = [
   {
     name: 'api_key_generic',
     pattern:
-      /(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9\-._~+/]{16,}["']?/gi,
-    replacement: '[REDACTED:api_key]',
+      /((?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*)(["']?)[A-Za-z0-9\-._~+/]{16,}=*\2/gi,
+    replacement: '$1$2[REDACTED:api_key]$2',
   },
   {
     name: 'aws_key',
@@ -44,13 +62,13 @@ const REDACTION_RULES: RedactionRule[] = [
   },
   {
     name: 'verdandi_key',
-    pattern: /vrd_[a-z]+_[0-9a-f]{32}/g,
+    pattern: /vrd_[a-z0-9][a-z0-9_-]*_[0-9a-f]{32}/gi,
     replacement: '[REDACTED:verdandi_key]',
   },
   {
     name: 'password_field',
-    pattern: /(?:password|passwd|pwd)\s*[:=]\s*["']?[^\s"']{4,}["']?/gi,
-    replacement: '[REDACTED:password]',
+    pattern: /((?:password|passwd|pwd)\s*[:=]\s*)(["']?)[^\s"',;}]{4,}\2/gi,
+    replacement: '$1$2[REDACTED:password]$2',
   },
   {
     name: 'private_key_block',
@@ -64,6 +82,9 @@ const REDACTION_RULES: RedactionRule[] = [
   },
 ];
 
+const JSON_SENSITIVE_FIELD_PATTERN =
+  /(["'](?:authorization|proxy[_-]?authorization|password|passwd|pwd|api[_-]?key|secret[_-]?key|client[_-]?secret|access[_-]?token|auth[_-]?token|id[_-]?token|refresh[_-]?token|token|private[_-]?key|secret)["']\s*:\s*)(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*')/gi;
+
 /**
  * Fields that are structurally dropped (never stored, regardless of content).
  * These carry no audit value and may leak filesystem or session info.
@@ -76,12 +97,19 @@ const STRUCTURAL_DROP_FIELDS = new Set([
 /**
  * Apply redaction rules to a single string value.
  */
-function redactString(value: string): string {
-  let result = value;
+export function redactText(value: string): string {
+  let result = value.replace(
+    JSON_SENSITIVE_FIELD_PATTERN,
+    '$1"[REDACTED:sensitive_value]"'
+  );
   for (const rule of REDACTION_RULES) {
     result = result.replace(rule.pattern, rule.replacement);
   }
   return result;
+}
+
+function normalizeFieldName(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**
@@ -92,7 +120,7 @@ export function redact(value: unknown): unknown {
   if (value === null || value === undefined) return value;
 
   if (typeof value === 'string') {
-    return redactString(value);
+    return redactText(value);
   }
 
   if (Array.isArray(value)) {
@@ -107,7 +135,15 @@ export function redact(value: unknown): unknown {
       // Structural drops
       if (STRUCTURAL_DROP_FIELDS.has(key)) continue;
 
-      result[key] = redact(val);
+      const sensitiveLabel = SENSITIVE_FIELD_LABELS.get(normalizeFieldName(key));
+      if (sensitiveLabel && val !== null && val !== undefined) {
+        const specificallyRedacted = typeof val === 'string' ? redactText(val) : val;
+        result[key] = specificallyRedacted !== val
+          ? specificallyRedacted
+          : `[REDACTED:${sensitiveLabel}]`;
+      } else {
+        result[key] = redact(val);
+      }
     }
 
     return result;

@@ -9,6 +9,41 @@ import { IngestPipeline } from './ingest.js';
 import { AppendWorker, verifyChain } from './hash-chain.js';
 import { createAuthenticator, type Scope } from './auth.js';
 
+const MAX_QUERY_LIMIT = 1000;
+const MAX_QUERY_OFFSET = 1_000_000;
+
+function boundedInteger(
+  value: unknown,
+  name: string,
+  defaultValue: number,
+  min: number,
+  max: number,
+): { value: number; error?: undefined } | { value?: undefined; error: string } {
+  if (value === undefined) return { value: defaultValue };
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return { error: `${name} must be an integer between ${min} and ${max}` };
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    return { error: `${name} must be an integer between ${min} and ${max}` };
+  }
+  return { value: parsed };
+}
+
+function timestampMillis(
+  value: unknown,
+  name: string,
+): { value?: number; error?: undefined } | { value?: undefined; error: string } {
+  if (value === undefined) return {};
+  if (typeof value !== 'string' || value.length > 64) {
+    return { error: `${name} must be a valid timestamp` };
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed)
+    ? { value: parsed }
+    : { error: `${name} must be a valid timestamp` };
+}
+
 export function createServer(db: Database.Database, opts: { logger?: boolean } = {}) {
   const appendWorker = new AppendWorker(db);
   const pipeline = new IngestPipeline(db, appendWorker);
@@ -134,6 +169,20 @@ export function createServer(db: Database.Database, opts: { logger?: boolean } =
 
     const q = request.query;
 
+    const since = timestampMillis(q.since, 'since');
+    const until = timestampMillis(q.until, 'until');
+    const parsedLimit = boundedInteger(q.limit, 'limit', 100, 1, MAX_QUERY_LIMIT);
+    const parsedOffset = boundedInteger(q.offset, 'offset', 0, 0, MAX_QUERY_OFFSET);
+    const queryError = since.error ?? until.error ?? parsedLimit.error ?? parsedOffset.error;
+    if (queryError) {
+      reply.status(400);
+      return { error: queryError };
+    }
+    if (since.value !== undefined && until.value !== undefined && since.value > until.value) {
+      reply.status(400);
+      return { error: 'since must not be later than until' };
+    }
+
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -162,18 +211,18 @@ export function createServer(db: Database.Database, opts: { logger?: boolean } =
       conditions.push('session_id = ?');
       params.push(q.session_id);
     }
-    if (q.since) {
+    if (since.value !== undefined) {
       conditions.push('timestamp_ms >= ?');
-      params.push(new Date(q.since).getTime());
+      params.push(since.value);
     }
-    if (q.until) {
+    if (until.value !== undefined) {
       conditions.push('timestamp_ms <= ?');
-      params.push(new Date(q.until).getTime());
+      params.push(until.value);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = Math.min(parseInt(q.limit ?? '100', 10), 1000);
-    const offset = parseInt(q.offset ?? '0', 10);
+    const limit = parsedLimit.value;
+    const offset = parsedOffset.value;
 
     const countRow = db.prepare(
       `SELECT COUNT(*) as total FROM audit_events ${where}`
@@ -238,11 +287,20 @@ export function createServer(db: Database.Database, opts: { logger?: boolean } =
       return { error: authErr.error };
     }
 
-    const sinceId = request.query.since
-      ? parseInt(request.query.since, 10)
-      : undefined;
+    const parsedSince = boundedInteger(
+      request.query.since,
+      'since',
+      1,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (request.query.since !== undefined && parsedSince.error) {
+      reply.status(400);
+      return { error: parsedSince.error };
+    }
+    const sinceId = request.query.since === undefined ? undefined : parsedSince.value;
 
-    const result = verifyChain(db, sinceId ? { since: sinceId } : undefined);
+    const result = verifyChain(db, sinceId === undefined ? undefined : { since: sinceId });
 
     const lastCheckpoint = db.prepare(
       'SELECT checkpoint_at, verified FROM checkpoints ORDER BY id DESC LIMIT 1'

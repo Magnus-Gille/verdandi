@@ -28,6 +28,13 @@ export interface AppendResult {
   chain_position: number;
 }
 
+export class IdempotencyConflictError extends Error {
+  constructor() {
+    super('event_id already exists with different event content');
+    this.name = 'IdempotencyConflictError';
+  }
+}
+
 interface QueuedEvent {
   event: Record<string, unknown>;
   resolve: (result: AppendResult) => void;
@@ -66,7 +73,7 @@ export class AppendWorker {
     );
 
     this.checkDuplicateStmt = db.prepare(
-      'SELECT id, entry_hash FROM audit_events WHERE event_id = ?'
+      'SELECT id, entry_hash, payload FROM audit_events WHERE event_id = ?'
     );
   }
 
@@ -115,17 +122,32 @@ export class AppendWorker {
   private appendOne(event: Record<string, unknown>): AppendResult {
     const eventId = event.event_id as string;
 
-    // Idempotency check (C06): if event_id already exists, return existing position
+    // Idempotency check (C06): exact repeated delivery returns the existing
+    // result. If the original request omitted its advisory timestamp, reuse
+    // the stored value before comparing so a server-generated timestamp does
+    // not turn a byte-for-byte retry into a false conflict.
     const existing = this.checkDuplicateStmt.get(eventId) as
-      | { id: number; entry_hash: string }
+      | { id: number; entry_hash: string; payload: string }
       | undefined;
     if (existing) {
+      if (!event.timestamp) {
+        const stored = JSON.parse(existing.payload) as Record<string, unknown>;
+        if (typeof stored.timestamp === 'string') event.timestamp = stored.timestamp;
+      }
+      const canonicalPayload = canonicalize(event);
+      if (canonicalPayload !== existing.payload) {
+        throw new IdempotencyConflictError();
+      }
       return {
         id: existing.id,
         event_id: eventId,
         entry_hash: existing.entry_hash,
         chain_position: existing.id,
       };
+    }
+
+    if (!event.timestamp || typeof event.timestamp !== 'string') {
+      event.timestamp = new Date().toISOString();
     }
 
     // Canonicalize the event payload
@@ -185,12 +207,27 @@ export function verifyChain(
   db: Database.Database,
   opts?: { since?: number }
 ): { valid: boolean; events_checked: number; error?: string; broken_at?: number } {
-  const query = opts?.since
+  const since = opts?.since;
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 1)) {
+    throw new RangeError('since must be a positive safe integer');
+  }
+
+  // Keep the row set and its predecessor on one SQLite read snapshot. This
+  // makes verification deterministic even if another process appends while a
+  // long chain is being checked.
+  return db.transaction(() => verifyChainSnapshot(db, since))();
+}
+
+function verifyChainSnapshot(
+  db: Database.Database,
+  since?: number
+): { valid: boolean; events_checked: number; error?: string; broken_at?: number } {
+  const query = since !== undefined
     ? 'SELECT id, payload, prev_hash, entry_hash FROM audit_events WHERE id >= ? ORDER BY id'
     : 'SELECT id, payload, prev_hash, entry_hash FROM audit_events ORDER BY id';
 
-  const rows = opts?.since
-    ? db.prepare(query).all(opts.since)
+  const rows = since !== undefined
+    ? db.prepare(query).all(since)
     : db.prepare(query).all();
 
   if (rows.length === 0) {
@@ -199,10 +236,10 @@ export function verifyChain(
 
   // If starting from an offset, we need the previous entry's hash
   let prevHash = GENESIS_HASH;
-  if (opts?.since) {
+  if (since !== undefined) {
     const prev = db.prepare(
       'SELECT entry_hash FROM audit_events WHERE id < ? ORDER BY id DESC LIMIT 1'
-    ).get(opts.since) as { entry_hash: string } | undefined;
+    ).get(since) as { entry_hash: string } | undefined;
     if (prev) prevHash = prev.entry_hash;
   }
 

@@ -14,6 +14,7 @@ import { createCheckpoint } from './checkpoint.js';
 import { verifyChain } from './hash-chain.js';
 import { inspectRecoveryCandidate } from './recovery-inspect.js';
 import { initializeNewGeneration, validateGeneration } from './generation.js';
+import { redactText } from './redaction.js';
 
 const PORT = parseInt(process.env.VERDANDI_PORT ?? '3036', 10);
 const HOST = process.env.VERDANDI_HOST ?? '127.0.0.1';
@@ -125,7 +126,8 @@ async function main() {
     console.log(`Verdandi listening on ${HOST}:${PORT}`);
     console.log(`Data directory: ${dataDir}`);
   } catch (err) {
-    console.error('Failed to start Verdandi:', err);
+    const message = redactText(err instanceof Error ? err.message : String(err));
+    console.error(`Failed to start Verdandi: ${message}`);
     process.exit(1);
   }
 
@@ -141,4 +143,8 @@ async function main() {
   process.on('SIGINT', shutdown);
 }
 
-main();
+main().catch((err: unknown) => {
+  const message = redactText(err instanceof Error ? err.message : String(err));
+  console.error(`Verdandi failed: ${message}`);
+  process.exit(1);
+});

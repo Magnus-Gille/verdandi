@@ -1,14 +1,16 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-07-10 (status reconciliation after recovery PR merge)
-**Branch:** `main` (canonical checkout current through `532677d` / PR #18)
+**Last session:** 2026-07-13 (bounded hardening implementation; no deployment)
+**Branch:** `codex/verdandi-hardening-20260713` (based on current `origin/main` at `91e5cb6`)
 
 ## Current state
 
-- PR #18 merged as `532677d`, landing the evidence-safe offline recovery
+- The local hardening branch adds safer secret redaction, collision-safe
+  idempotency, bounded read parameters, snapshot-consistent verification, and
+  commit-before-anchor ordering. It is intentionally not pushed or deployed.
+- `origin/main` at `91e5cb6` includes PR #18's evidence-safe offline recovery
   tooling, canonical production-storage contract, and fail-closed generation
-  gate. The canonical checkout is current with `origin/main`, but this current
-  code has not been deployed.
+  gate. These current safeguards have not been deployed.
 - The old MVP installation remains on huginmunin. On 2026-07-10 its
   `verdandi.service` was live-verified disabled and inactive, and
   `verdandi-checkpoint.timer` was absent/inactive; the service will not
@@ -26,6 +28,23 @@
   source card is approximately 63.3 GB; the M5 had approximately 1.46 TiB free
   on 2026-07-10, ample for the protected master image, working image, and
   recovery output.
+
+## 2026-07-13 bounded hardening
+
+- Sensitive structured fields now keep their names but replace their values;
+  textual redaction also covers JSON-encoded credentials and component names
+  containing hyphens/digits. Error strings are redacted before API/CLI output.
+- Exact repeated delivery remains idempotent, including when Verdandi supplied
+  the advisory timestamp. Reuse of an `event_id` with different canonical
+  content now returns a conflict instead of silently claiming success.
+- Event-query pagination/date bounds and incremental verification boundaries
+  fail closed on malformed input. Hash-chain verification runs on one SQLite
+  read snapshot for deterministic results under concurrent external appends.
+- Checkpoint rows commit before an anchor is atomically published, so a failed
+  commit can never leave an anchor for a rolled-back row. An anchor-write
+  failure remains loud while preserving the committed verified checkpoint.
+- Validation: 107 tests, lint, build, explicit no-emit typecheck, production
+  dependency audit, and full dependency audit pass; npm reports 0 vulnerabilities.
 
 ## 2026-07-10 recovery preparation
 
@@ -47,10 +66,10 @@
   and uses a pipefail-safe inspection pipeline. A follow-up runtime-SQL audit
   now validates every supported table column/default/PK, all indexes/foreign
   keys, and prepares representative server/auth/append/checkpoint statements
-  before acceptance. Validation: 88 tests, build,
-  lint, and diff checks pass.
+  before acceptance. The original PR validation passed 88 tests, build, lint,
+  and diff checks; the later hardening validation is recorded above.
 
-## Completed This Session
+## Earlier completed work
 - Added a Verdandi checkpoint command for issue #16: verifies the hash chain,
   records the current verified head in `checkpoints`, and optionally writes a
   local JSON anchor.
@@ -79,7 +98,7 @@
   its original boot SD can be moved to the prepared M5 recovery
   reader/workspace without an unsafe shutdown or source-card write.
 
-## Next Steps (Phase 2 scope)
+## Next Steps (recovery gate only)
 1. Coordinate the outage for huginmunin's co-hosted services, cleanly shut the
    host down, remove its original boot SD, and insert the card into the M5
    reader. Immediately unmount any automounted partitions, set the whole
@@ -94,11 +113,14 @@
    only if explicitly authorized, run `init-new-generation`. Then start
    Verdandi and verify production health, generation state, and hash-chain
    integrity. Enable `verdandi-checkpoint.timer` last.
-6. Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
-7. Noxctl native integration (emit events on Fortnox API calls directly)
-8. Hugin integration (emit task lifecycle events)
-9. Ratatoskr integration (emit Telegram command events)
-10. Outbox sync automation (launchd on laptop for periodic flush)
+
+## Deferred roadmap (not part of the hardening sprint)
+
+- Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
+- Noxctl native integration (emit events on Fortnox API calls directly)
+- Hugin integration (emit task lifecycle events)
+- Ratatoskr integration (emit Telegram command events)
+- Outbox sync automation (launchd on laptop for periodic flush)
 
 ## Phase 3 scope (later)
 - GDPR pseudonymization (verdandi-keys.db)

@@ -72,22 +72,22 @@ npx tsx src/index.ts init-new-generation <operator> <incident> <evidence.json>
 | POST | `/api/events` | Bearer | Ingest single event |
 | POST | `/api/events/batch` | Bearer | Ingest batch (max 1000) |
 | POST | `/api/events/hook` | Bearer | Ingest Claude Code hook payload |
-| GET | `/api/events` | No | Query events (filters: trace_id, event_type, component, severity, session_id, since, until) |
-| GET | `/api/events/:eventId` | No | Get single event |
-| GET | `/api/verify` | No | Verify hash chain integrity |
+| GET | `/api/events` | Bearer (`read`/`admin`) | Query events (filters: trace_id, event_type, component, severity, session_id, since, until) |
+| GET | `/api/events/:eventId` | Bearer (`read`/`admin`) | Get single event |
+| GET | `/api/verify` | Bearer (`read`/`admin`) | Verify hash chain integrity |
 
 ## Ingest pipeline (10 stages)
 
 Every event passes through these stages in order:
 1. **Authentication** — reject invalid key, derive component identity
 2. **Validation** — schema check, size limits, required fields
-3. **Redaction** — strip secrets from all string fields
-4. **Field override** — server sets component, timestamp, event_id
+3. **Redaction** — replace sensitive structured values and secret string patterns
+4. **Field override** — server sets component and defaults timestamp/event_id
 5. **Classification** — compute retention_class and evidence_grade server-side
 6. **Canonicalization** — RFC 8785 deterministic JSON
 7. **Queue** — enqueue for single append worker
 8. **Atomic append** — BEGIN IMMEDIATE, read chain head, hash, INSERT, COMMIT
-9. **Idempotency** — event_id UNIQUE constraint, return existing on duplicate
+9. **Idempotency** — return existing on exact retry; reject divergent event_id reuse
 10. **Layer 3 write** — optional encrypted debug payload
 
 ## Event taxonomy
