@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { initDatabase } from '../src/db.js';
 import { AppendWorker, verifyChain } from '../src/hash-chain.js';
 import { canonicalize } from '../src/canonical.js';
-import { redact } from '../src/redaction.js';
+import { redact, redactText } from '../src/redaction.js';
 import { classifyRetention, assignEvidenceGrade } from '../src/classification.js';
 import { registerApiKey, createAuthenticator } from '../src/auth.js';
 import { IngestPipeline, type BatchIngestResult } from '../src/ingest.js';
@@ -130,6 +130,29 @@ describe('AppendWorker', () => {
     const count = (db.prepare('SELECT COUNT(*) as c FROM audit_events').get() as { c: number }).c;
     expect(count).toBe(1);
   });
+
+  it('rejects event_id reuse with different event content', async () => {
+    const worker = new AppendWorker(db);
+    const event = {
+      event_id: 'evt-collision',
+      event_type: 'task.submit',
+      component: 'hugin',
+      severity: 'routine',
+      retention_class: 'operational',
+      evidence_grade: 'mechanism',
+      timestamp: '2026-04-03T10:00:00Z',
+      action: { verb: 'submit', resource_type: 'hugin_task' },
+    };
+
+    await worker.append(event);
+    await expect(worker.append({
+      ...event,
+      action: { verb: 'cancel', resource_type: 'hugin_task' },
+    })).rejects.toThrow('different event content');
+
+    const count = (db.prepare('SELECT COUNT(*) as c FROM audit_events').get() as { c: number }).c;
+    expect(count).toBe(1);
+  });
 });
 
 describe('verifyChain', () => {
@@ -156,6 +179,11 @@ describe('verifyChain', () => {
     const result = verifyChain(db);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Tampered');
+  });
+
+  it('rejects an invalid incremental verification boundary', () => {
+    expect(() => verifyChain(db, { since: 0 })).toThrow('positive safe integer');
+    expect(() => verifyChain(db, { since: Number.NaN })).toThrow('positive safe integer');
   });
 });
 
@@ -209,6 +237,40 @@ describe('redact', () => {
     };
     const result = redact(input) as Record<string, unknown>;
     expect(JSON.stringify(result)).toContain('[REDACTED:password]');
+  });
+
+  it('redacts values under sensitive field names while preserving metadata', () => {
+    const input = {
+      password: 'SuperSecret123!',
+      nested: {
+        api_key: 'abc123abc123abc123',
+        refreshToken: 'refresh-me',
+        token_count: 42,
+      },
+    };
+
+    expect(redact(input)).toEqual({
+      password: '[REDACTED:password]',
+      nested: {
+        api_key: '[REDACTED:api_key]',
+        refreshToken: '[REDACTED:token]',
+        token_count: 42,
+      },
+    });
+  });
+
+  it('redacts JSON-encoded fields and hyphenated Verdandi keys from text', () => {
+    const verdandiKey = `vrd_munin-memory_${'a'.repeat(32)}`;
+    const result = redactText(
+      `request={"api_key":"abc123abc123abc123","password":"open sesame"} key=${verdandiKey}`
+    );
+
+    expect(result).toContain('"api_key":"[REDACTED:sensitive_value]"');
+    expect(result).toContain('"password":"[REDACTED:sensitive_value]"');
+    expect(result).toContain('[REDACTED:verdandi_key]');
+    expect(result).not.toContain('abc123abc123abc123');
+    expect(result).not.toContain('open sesame');
+    expect(result).not.toContain(verdandiKey);
   });
 });
 
@@ -322,6 +384,43 @@ describe('IngestPipeline', () => {
     // Verify chain integrity
     const verification = verifyChain(db);
     expect(verification.valid).toBe(true);
+  });
+
+  it('accepts exact repeated delivery without a client timestamp', async () => {
+    const { key } = registerApiKey(db, 'hugin', ['write']);
+    const pipeline = new IngestPipeline(db, new AppendWorker(db));
+    const event = {
+      event_id: 'evt-retry-with-server-time',
+      event_type: 'task.submit',
+      severity: 'routine',
+      action: { verb: 'submit', resource_type: 'task' },
+    };
+
+    const first = await pipeline.ingest(`Bearer ${key}`, event);
+    const retry = await pipeline.ingest(`Bearer ${key}`, event);
+
+    expect(first.ok).toBe(true);
+    expect(retry).toEqual(first);
+    expect((db.prepare('SELECT COUNT(*) AS count FROM audit_events').get() as { count: number }).count).toBe(1);
+  });
+
+  it('returns 409 for divergent reuse of an event_id', async () => {
+    const { key } = registerApiKey(db, 'hugin', ['write']);
+    const pipeline = new IngestPipeline(db, new AppendWorker(db));
+    const base = {
+      event_id: 'evt-retry-conflict',
+      event_type: 'task.submit',
+      severity: 'routine',
+      action: { verb: 'submit', resource_type: 'task' },
+    };
+
+    expect((await pipeline.ingest(`Bearer ${key}`, base)).ok).toBe(true);
+    const conflict = await pipeline.ingest(`Bearer ${key}`, {
+      ...base,
+      action: { verb: 'cancel', resource_type: 'task' },
+    });
+
+    expect(conflict).toMatchObject({ ok: false, status: 409, duplicate: true });
   });
 
   it('rejects invalid events', async () => {

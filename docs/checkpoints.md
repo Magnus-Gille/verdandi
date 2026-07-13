@@ -9,6 +9,10 @@ verified chain head. The anchor is local evidence only; Verdandi should not clai
 RFC 3161/TSA backing until `tsa_response` is populated by a real timestamping
 authority integration.
 
+The checkpoint row commits before the anchor is atomically published. If anchor
+publication fails, the verified database checkpoint remains recorded and the
+command fails loudly; it never publishes a file for a rolled-back checkpoint.
+
 Each new checkpoint also checks continuity against the latest previous verified
 checkpoint. If that prior checkpoint points at a missing or changed event hash,
 the new checkpoint is recorded as unverified and no anchor file is written.

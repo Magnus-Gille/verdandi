@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
@@ -92,6 +92,25 @@ describe('createCheckpoint', () => {
       last_event_id: appended.id,
       last_entry_hash: appended.entry_hash,
       previous_checkpoint_id: null,
+    });
+  });
+
+  it('commits the checkpoint before attempting to publish its anchor', async () => {
+    await appendTestEvent('evt-checkpoint-anchor-failure');
+    const notDirectory = join(tempDir, 'not-a-directory');
+    writeFileSync(notDirectory, 'occupied');
+
+    expect(() => createCheckpoint(db, {
+      anchorPath: join(notDirectory, 'latest.json'),
+      now: new Date('2026-07-07T10:45:00.000Z'),
+    })).toThrow();
+
+    const row = db.prepare(
+      'SELECT checkpoint_at, verified FROM checkpoints ORDER BY id DESC LIMIT 1'
+    ).get() as { checkpoint_at: string; verified: number };
+    expect(row).toEqual({
+      checkpoint_at: '2026-07-07T10:45:00.000Z',
+      verified: 1,
     });
   });
 

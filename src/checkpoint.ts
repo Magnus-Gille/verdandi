@@ -49,6 +49,7 @@ interface InsertResult {
   verification_error?: string;
   broken_at?: number;
   continuity_error?: string;
+  previous_checkpoint_id?: number;
 }
 
 export function createCheckpoint(
@@ -84,20 +85,6 @@ export function createCheckpoint(
 
     const checkpointId = info.lastInsertRowid as number;
 
-    if (verified && opts.anchorPath) {
-      writeAnchor(opts.anchorPath, {
-        version: 1,
-        service: 'verdandi',
-        verification: 'sha256-hash-chain',
-        checkpoint_id: checkpointId,
-        checkpoint_at: checkpointAt,
-        events_checked: verification.events_checked,
-        last_event_id: lastEventId,
-        last_entry_hash: lastEntryHash,
-        previous_checkpoint_id: previousCheckpoint?.id ?? null,
-      });
-    }
-
     return {
       checkpoint_id: checkpointId,
       last_event_id: lastEventId,
@@ -107,10 +94,28 @@ export function createCheckpoint(
       verification_error: verification.error,
       broken_at: verification.broken_at,
       continuity_error: continuityError,
+      previous_checkpoint_id: previousCheckpoint?.id,
     };
   });
 
   const inserted = transaction.immediate();
+
+  // Publish only after SQLite has committed the checkpoint. Writing the
+  // anchor inside the transaction could leave a durable file referring to a
+  // row that was later rolled back by a commit failure.
+  if (inserted.verified && opts.anchorPath) {
+    writeAnchor(opts.anchorPath, {
+      version: 1,
+      service: 'verdandi',
+      verification: 'sha256-hash-chain',
+      checkpoint_id: inserted.checkpoint_id,
+      checkpoint_at: checkpointAt,
+      events_checked: inserted.events_checked,
+      last_event_id: inserted.last_event_id,
+      last_entry_hash: inserted.last_entry_hash,
+      previous_checkpoint_id: inserted.previous_checkpoint_id ?? null,
+    });
+  }
 
   return {
     verified: inserted.verified,

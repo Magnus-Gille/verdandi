@@ -8,9 +8,9 @@
 import { randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
 import { type AuthResult, createAuthenticator, type Scope } from './auth.js';
-import { redact } from './redaction.js';
+import { redact, redactText } from './redaction.js';
 import { classifyRetention, assignEvidenceGrade, isErasureEligible, type Severity } from './classification.js';
-import { AppendWorker } from './hash-chain.js';
+import { AppendWorker, IdempotencyConflictError } from './hash-chain.js';
 
 const EVENT_TYPE_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*){1,4}$/;
 const VALID_SEVERITIES = new Set(['critical', 'significant', 'routine', 'debug']);
@@ -177,10 +177,9 @@ export class IngestPipeline {
       redacted.event_id = randomUUID();
     }
 
-    // Client timestamp is preserved but server_timestamp is authoritative for ordering
-    if (!redacted.timestamp || typeof redacted.timestamp !== 'string') {
-      redacted.timestamp = new Date().toISOString();
-    }
+    // Client timestamp is advisory and preserved when present. AppendWorker
+    // supplies it for a new event, or reuses the stored value for an exact
+    // retry, while server_timestamp remains authoritative for ordering.
 
     // Stage 5: Server-side retention classification (never trust client)
     const severity = redacted.severity as Severity;
@@ -208,7 +207,16 @@ export class IngestPipeline {
         chain_position: result.chain_position,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof IdempotencyConflictError) {
+        return {
+          ok: false,
+          status: 409,
+          error: err.message,
+          duplicate: true,
+        };
+      }
+
+      const message = redactText(err instanceof Error ? err.message : String(err));
       // Check for duplicate (idempotency)
       if (message.includes('UNIQUE constraint failed')) {
         return {

@@ -86,6 +86,36 @@ describe('GET /api/events authorization', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it.each([
+    'limit=0',
+    'limit=1001',
+    'limit=not-a-number',
+    'offset=-1',
+    'offset=1000001',
+    'since=not-a-date',
+    'until=not-a-date',
+  ])('rejects an invalid read bound: %s', async (query) => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    app = createServer(db, { logger: false });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/events?${query}`,
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a read window whose start is later than its end', async () => {
+    const { key } = registerApiKey(db, 'heimdall', ['read']);
+    app = createServer(db, { logger: false });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/events?since=2026-07-13T12%3A00%3A00Z&until=2026-07-13T11%3A00%3A00Z',
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe('GET /api/events/:eventId and /api/verify authorization', () => {
@@ -116,6 +146,20 @@ describe('GET /api/events/:eventId and /api/verify authorization', () => {
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it.each(['since=0', 'since=-1', 'since=1.5', 'since=not-a-number'])(
+    'rejects an invalid verification boundary: %s',
+    async (query) => {
+      const { key } = registerApiKey(db, 'heimdall', ['read']);
+      app = createServer(db, { logger: false });
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/verify?${query}`,
+        headers: { authorization: `Bearer ${key}` },
+      });
+      expect(res.statusCode).toBe(400);
+    },
+  );
 });
 
 describe('POST endpoints require write scope', () => {

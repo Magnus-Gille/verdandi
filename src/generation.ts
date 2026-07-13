@@ -14,6 +14,7 @@ import { verifyCheckpointHistory } from './checkpoint-verify.js';
 import { initDatabase } from './db.js';
 import { GENESIS_HASH, verifyChain } from './hash-chain.js';
 import { inspectSchemaContract, SUPPORTED_SCHEMA_VERSION } from './schema-contract.js';
+import { redactText } from './redaction.js';
 
 export interface DatabaseBinding {
   schema_version: number;
@@ -318,5 +319,5 @@ function isUuid(value: string): boolean {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactText(error instanceof Error ? error.message : String(error));
 }
