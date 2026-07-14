@@ -1,7 +1,7 @@
 {
   "name": "verdandi",
   "version": "0.1.0",
-  "description": "Audit log for agentic actions — the Grimnir accountability layer",
+  "description": "Stopped v1; future Grimnir Action Receipt Protocol reference ledger pending activation",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
