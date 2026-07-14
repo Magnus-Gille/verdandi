@@ -1,5 +1,9 @@
 # Verdandi Checkpoints
 
+> **Historical v1 mechanism.** The checkpoint and anchor described here are local/same-host
+> evidence, not an independent witness. [ADR-0001](adr-0001-action-receipt-ledger.md) requires an
+> independently retained checkpoint plus clean-room restore proof before any v2 activation.
+
 Verdandi checkpoints make hash-chain verification explicit and recurring.
 
 `verdandi checkpoint [anchor-path]` verifies the full local audit-event hash

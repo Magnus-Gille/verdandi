@@ -1,5 +1,11 @@
 # Verdandi offline recovery and new genesis
 
+> **Historical incident runbook — recovery path declined.** On 2026-07-13 the owner abandoned
+> physical recovery and accepted the approximate 67,000-event v1 history as lost with continuity
+> `none`. Do not execute this runbook. A future v2 genesis is governed by
+> [ADR-0001](adr-0001-action-receipt-ledger.md) and remains forbidden until every activation gate
+> passes and the owner separately authorizes activation.
+
 This runbook is for the July 2026 loss of Verdandi's runtime directory on
 `huginmunin`. Its first goal is to preserve the SD card as evidence. Its second
 goal is to recover an intact, non-empty Verdandi hash chain if that can be done

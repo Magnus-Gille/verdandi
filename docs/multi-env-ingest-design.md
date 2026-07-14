@@ -1,5 +1,11 @@
 # Multi-environment ingest coverage: the minimal seam
 
+> **Historical v1 document — superseded by
+> [ADR-0001](adr-0001-action-receipt-ledger.md).** Do not implement this document's universal
+> Hugin/Telegram/task telemetry or broad fail-open ingestion model. Any future integration must use
+> the accepted consequential-action selection rule, durable pre-action intent, constrained
+> authoritative readback, and fail-closed boundary defined by ADR-0001.
+
 Design doc for issue #10. Scope: design (not build) the ingest path for the
 two highest-value emitters beyond the laptop — **hugin** (Pi-side task
 execution) and **ratatoskr** (Telegram concierge). Desktop/Web/Mobile Claude

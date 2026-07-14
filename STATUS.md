@@ -1,135 +1,99 @@
 # Verdandi — Project Status
 
-**Last session:** 2026-07-13 (bounded hardening implementation; no deployment)
-**Branch:** `codex/verdandi-hardening-20260713` (based on current `origin/main` at `91e5cb6`)
+**Last session:** 2026-07-14 — owner accepted the action-receipt purpose reset; governance PR in progress
+**Branch:** `agent/action-receipt-adr` from canonical `origin/main@2c5439a`
+**Lifecycle:** stopped
 
 ## Current state
 
-- The local hardening branch adds safer secret redaction, collision-safe
-  idempotency, bounded read parameters, snapshot-consistent verification, and
-  commit-before-anchor ordering. It is intentionally not pushed or deployed.
-- `origin/main` at `91e5cb6` includes PR #18's evidence-safe offline recovery
-  tooling, canonical production-storage contract, and fail-closed generation
-  gate. These current safeguards have not been deployed.
-- The old MVP installation remains on huginmunin. On 2026-07-10 its
-  `verdandi.service` was live-verified disabled and inactive, and
-  `verdandi-checkpoint.timer` was absent/inactive; the service will not
-  auto-start on reboot. Its installed unit still has `Restart=always`, so do
-  not start it manually before recovery is complete.
-- Verdandi production remains intentionally inactive while the original
-  database recovery is pending. Do not deploy Verdandi, start its service,
-  enable checkpointing, adopt a database candidate, or initialize a new
-  production genesis before the bounded recovery attempt and an explicit
-  recovery decision.
-- Grimnir PR #74, merged as `a3eb01f`, is deployed. Its fail-closed
-  persistent-data guard prevents service deploys from silently deleting
-  untracked persistent data.
-- The M5 recovery toolchain and protected workspace are ready. The known
-  source card is approximately 63.3 GB; the M5 had approximately 1.46 TiB free
-  on 2026-07-10, ample for the protected master image, working image, and
-  recovery output.
+- The owner permanently abandoned physical recovery of the deleted legacy database. Treat the
+  approximate 67,000-event v1 history as lost and claim no continuity.
+- Verdandi's service remains disabled/inactive and its checkpoint timer remains absent/inactive.
+- No restart, deployment, new genesis, or implementation has been authorized.
+- Canonical `main@2c5439a` is a hardened v1 implementation. It is historical code, not a conforming
+  Action Receipt Protocol implementation and has no compatibility promise with a future v2 schema.
 
-## 2026-07-13 bounded hardening
+## Accepted purpose (2026-07-14)
 
-- Sensitive structured fields now keep their names but replace their values;
-  textual redaction also covers JSON-encoded credentials and component names
-  containing hyphens/digits. Error strings are redacted before API/CLI output.
-- Exact repeated delivery remains idempotent, including when Verdandi supplied
-  the advisory timestamp. Reuse of an `event_id` with different canonical
-  content now returns a conflict instead of silently claiming success.
-- Event-query pagination/date bounds and incremental verification boundaries
-  fail closed on malformed input. Hash-chain verification runs on one SQLite
-  read snapshot for deterministic results under concurrent external appends.
-- Checkpoint rows commit before an anchor is atomically published, so a failed
-  commit can never leave an anchor for a rolled-back row. An anchor-write
-  failure remains loud while preserving the committed verified checkpoint.
-- Validation: 107 tests, lint, build, explicit no-emit typecheck, production
-  dependency audit, and full dependency audit pass; npm reports 0 vulnerabilities.
+[ADR-0001](docs/adr-0001-action-receipt-ledger.md) is the current product authority:
 
-## 2026-07-10 recovery preparation
+> Verdandi is Grimnir's sovereign append-only reference ledger of consequential action receipts.
+> It binds authenticated actor/principal authority and bounded pre-action intent to independently
+> observed authoritative outcome and reversal or mitigation evidence.
 
-- Live read-only evidence found the service inactive after `226/NAMESPACE`,
-  with no Verdandi DB/WAL/SHM on huginmunin's mounted filesystems or the NAS.
-- The live `.env` placed runtime data at
-  `/home/magnus/repos/verdandi/data`; Grimnir rsync deploy uses `--delete` and
-  did not preserve that directory. The 2026-07-08 deploy is the likely loss
-  mechanism, though no retained deployment log proves causality.
-- Prepared an image-first, four-hour-bounded ext4 recovery/new-genesis runbook,
-  a read-only candidate inspector, and tests enforcing canonical production
-  storage at `/home/magnus/.local/share/verdandi`.
-- Production startup/checkpointing now validate an existing nonempty DB, strict
-  generation metadata + adopted head, supported critical schema, full event
-  chain, and claimed-valid checkpoint history. New DB creation is isolated in
-  the explicit `init-new-generation` command.
-- Formal PR review follow-up also makes recovery acceptance depend on unchanged
-  source evidence, reports unvalidated external-anchor presence separately,
-  and uses a pipefail-safe inspection pipeline. A follow-up runtime-SQL audit
-  now validates every supported table column/default/PK, all indexes/foreign
-  keys, and prepares representative server/auth/append/checkpoint statements
-  before acceptance. The original PR validation passed 88 tests, build, lint,
-  and diff checks; the later hardening validation is recorded above.
+The portable product is the Action Receipt Protocol—schemas, fixtures, mutation middleware, and
+authoritative-outcome adapters. Verdandi is the reference ledger/verifier, not a generic audit-log
+product.
 
-## Earlier completed work
-- Added a Verdandi checkpoint command for issue #16: verifies the hash chain,
-  records the current verified head in `checkpoints`, and optionally writes a
-  local JSON anchor.
-- Added daily systemd timer/service templates for checkpoint cadence.
-- Added checkpoint tests for verified heads, local anchors, empty chains, and
-  tamper detection.
-- Phase 1 landscape research (Hugin task, 40+ frameworks, 90+ sources) — `audit-log-landscape-research.md`
-- Phase 2 architecture proposal (Hugin task, 2100 lines) — `audit-log-architecture-proposal.md`
-- Adversarial review: Claude vs Codex, 2 rounds, 28 critique points
-- Phase 2.5 ingest-trust specification (Hugin task, 1949 lines) — `verdandi-ingest-trust-spec.md`
-- MVP implementation: 8 source modules, 28 tests passing
-- Initial MVP was previously deployed to Pi (huginmunin:3036) under systemd;
-  the service is now intentionally inactive during recovery.
-- Claude Code hooks wired (PostToolUse + PermissionRequest)
-- API keys registered for all 6 Grimnir components
-- Grimnir services.json updated — commit `14dc1f7` (verdandi), `6a620ba` (grimnir)
-- PR #17 for issue #16 merged as `3ae7d3c` after lint, build, tests, review, and green GitHub checks.
+### Scope boundary
 
-## In Progress
-- Awaiting a coordinated physical recovery window: cleanly shutting down
-  huginmunin also interrupts its co-hosted services. The original boot SD must
-  then be connected to the M5 reader for the bounded image-first recovery.
+- Fail closed only before autonomous consequential mutations.
+- Reads, searches, drafts, model calls, harmless tasks, and ordinary telemetry bypass Verdandi.
+- Use `action.intent`, `action.outcome`, and `action.gap` with actor, principal, authority, observer,
+  source reference, drift, and reversal/mitigation kept explicit.
+- Never capture prompts, reasoning, universal tool calls, generic task lifecycle, source payloads,
+  full financial/message/file content, or post-session decision extraction.
+- Source systems remain authoritative for their objects.
 
-## Blockers
-- Recovery requires physical access plus a coordinated huginmunin outage so
-  its original boot SD can be moved to the prepared M5 recovery
-  reader/workspace without an unsafe shutdown or source-card write.
+## Governance work authorized now
 
-## Next Steps (recovery gate only)
-1. Coordinate the outage for huginmunin's co-hosted services, cleanly shut the
-   host down, remove its original boot SD, and insert the card into the M5
-   reader. Immediately unmount any automounted partitions, set the whole
-   source device read-only, and verify it with `blockdev --getro` per the
-   runbook before imaging. Never boot from the source card.
-2. Acquire the protected master image and run the four-hour-bounded recovery
-   procedure from `docs/offline-recovery-and-new-genesis.md`.
-3. Validate any recovered candidate read-only and record an explicit decision
-   to adopt it or authorize a new genesis. Do not execute either path yet.
-4. Deploy PR #18's recovery and generation safeguards from current `main`.
-5. Under those deployed safeguards, either adopt the accepted candidate or,
-   only if explicitly authorized, run `init-new-generation`. Then start
-   Verdandi and verify production health, generation state, and hash-chain
-   integrity. Enable `verdandi-checkpoint.timer` last.
+- Land ADR-0001 and the 64-story candidate product backlog through review.
+- Supersede/close v1 issues #1, #3, and #5.
+- Rewrite #2 around minimization, lifecycle, erasure, and independent anchoring.
+- Rewrite #15 around tailnet receipt intake and tenant/observer identity lifecycle.
+- Close #21 only after the ADR/backlog merge and issue disposition are verified.
+- Keep #16 closed while treating its same-host checkpoint as insufficient independent anchoring.
 
-## Deferred roadmap (not part of the hardening sprint)
+This authorizes documentation, contract planning, fixtures, and issue hygiene only.
 
-- Rubber-stamp detection (dwell-time scoring algorithm, alerting via Telegram)
-- Noxctl native integration (emit events on Fortnox API calls directly)
-- Hugin integration (emit task lifecycle events)
-- Ratatoskr integration (emit Telegram command events)
-- Outbox sync automation (launchd on laptop for periodic flush)
+## Activation blockers
 
-## Phase 3 scope (later)
-- GDPR pseudonymization (verdandi-keys.db)
-- RFC 3161 daily checkpoints
-- Erasure workflow
-- LIA documentation
+A separate owner activation decision requires all of the following:
 
-## Phase 4 scope (later)
-- Heimdall dashboard widget
-- Skuld briefing integration
-- Cross-session analysis
-- Post-session decision extraction
+1. v2 schemas and positive/negative selection fixtures;
+2. per-tenant mint/list/rotate/revoke plus server-derived actor identity;
+3. tailnet-only off-Pi intake;
+4. two real adapters with independent authoritative readback, including a non-Claude tenant;
+5. a demonstrated fail-closed consequential-mutation gate;
+6. an exception-only Heimdall/operator consumer that causes a concrete response;
+7. an independently witnessed checkpoint and offline verifier;
+8. clean-room export/restore proof;
+9. tested retention and erasure on the v2 schema;
+10. coordinated Grimnir architecture, tenant, recovery, threat, lifecycle, and registry updates.
+
+No new genesis exists until these are all evidenced and separately approved.
+
+## Accepted proof order
+
+1. Contract schemas/fixtures and fake-provider conformance harness; no external mutation.
+2. Grimnir deployment adapter under simulation, including marker drift and `git_revert` recovery.
+3. Hugin mutation gate plus Heimdall exception-only consumer.
+4. Independent non-Claude tenant and mocked/sandboxed noxctl/Fortnox adapter.
+5. Decide whether to extract neutral protocol packages only after two independent integrations and
+   a receipt has changed a real operating decision.
+
+## Adjacent Hugin lane assignment
+
+Owner-approved coordination rule:
+
+- Codex owns Harbor/Gate-D evaluation plus gille-inference #250–#252 integration.
+- The ticket fleet owns Hugin #190, then #191, then #192; closed #183 remains a capped-window
+  acceptance constraint for #190 and is not reopened.
+- No duplicate ticket ownership; concurrent work uses separate worktrees.
+- Existing review/evidence gates still govern deploy and learning promotion.
+
+## Historical documents
+
+The following are retained for v1 history but are superseded as product authority:
+
+- `docs/multi-env-ingest-design.md` — universal telemetry and fail-open ingestion;
+- `docs/offline-recovery-and-new-genesis.md` — physical recovery path declined by owner;
+- `docs/checkpoints.md` — local checkpoint mechanism without independent witness.
+
+## Next steps
+
+1. Review and merge the governance PR.
+2. Verify the accepted GitHub issue dispositions and close #21.
+3. Prepare a separate Stage 0 implementation proposal limited to schemas, fixtures, and a
+   no-external-mutation conformance harness.
+4. Keep the service and checkpoint timer disabled throughout.
