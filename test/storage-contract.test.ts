@@ -8,6 +8,15 @@ const validationCommand =
   'ExecStartPre=/usr/bin/node /home/magnus/repos/verdandi/dist/index.js validate-generation';
 
 describe('production storage contract', () => {
+  it('keeps immutable dependency metadata and deployment provenance checkout-clean', () => {
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const lockfile = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+    const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+
+    expect(lockfile.packages[''].engines).toEqual(manifest.engines);
+    expect(gitignore.split(/\r?\n/)).toContain('.deployed-commit');
+  });
+
   it('keeps runtime data outside the rsync deployment checkout', () => {
     const unit = readFileSync(join(root, 'verdandi.service'), 'utf8');
 
