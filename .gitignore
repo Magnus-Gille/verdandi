@@ -6,4 +6,5 @@ data/
 *.db-shm
 .env
 .verdandi-keyfile
+.deployed-commit
 debate/
