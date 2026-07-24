@@ -1,7 +1,7 @@
 {
   "name": "verdandi",
   "version": "0.1.0",
-  "description": "Audit log for agentic actions — the Grimnir accountability layer",
+  "description": "Audit log for agentic actions \u2014 the Grimnir accountability layer",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -16,7 +16,7 @@
     "node": ">=22.13.0"
   },
   "author": "Magnus Gille",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "dependencies": {
     "better-sqlite3": "^12.10.1",
