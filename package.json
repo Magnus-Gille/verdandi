@@ -20,7 +20,7 @@
   "private": true,
   "dependencies": {
     "better-sqlite3": "^12.10.1",
-    "fastify": "^5.8.5"
+    "fastify": "^5.10.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
